@@ -62,16 +62,16 @@ class URLResolver(private val cache: DiskCache, private val resources: HttpResou
                 // A version directory is packaging detail, not part of the URL's logical archive root.
                 extractLocalArchive(archiveFile, destination, skipSingleRoot = true)
             }
-            val selected = archive.member.fold(extracted.directory) { path, component -> path.resolve(component) }.normalize()
-            if (!selected.startsWith(extracted.directory) || !selected.exists()) {
+            val extractedRoot = extracted.directory.toRealPath()
+            val selected = archive.member.fold(extractedRoot) { path, component -> path.resolve(component) }.normalize()
+            if (!selected.startsWith(extractedRoot) || !selected.exists()) {
                 extracted.close()
                 throw IllegalArgumentException("Archive member does not exist: ${archive.member.joinToString("/")}")
             }
             // Archives may contain symlinks. Resolve the selected member before returning it so a crafted archive cannot expose a path
             // outside its immutable extraction entry.
-            val resolvedRoot = extracted.directory.toRealPath()
             val resolvedMember = selected.toRealPath()
-            if (!resolvedMember.startsWith(resolvedRoot)) {
+            if (!resolvedMember.startsWith(extractedRoot)) {
                 extracted.close()
                 throw IllegalArgumentException("Archive member escapes the archive root: ${archive.member.joinToString("/")}")
             }
