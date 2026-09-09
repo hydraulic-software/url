@@ -408,8 +408,7 @@ class URLResolverTest {
 
     @Test
     fun `installed zsh integration resolves and executes URL commands`() {
-        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
-            return
+        val zsh = listOf(Path.of("/bin/zsh"), Path.of("/usr/bin/zsh")).firstOrNull(Files::isExecutable) ?: return
         val zshrc = tempDir / ".zshrc"
         installZshIntegration(zshrc)
         val bin = (tempDir / "bin").createDirectories()
@@ -426,7 +425,7 @@ class URLResolverTest {
             _hydraulic_url_accept_line
             eval "${'$'}BUFFER"
         """.trimIndent()
-        val process = ProcessBuilder("zsh", "-dfc", command)
+        val process = ProcessBuilder(zsh.toString(), "-dfc", command)
             .redirectErrorStream(true)
             .apply { environment()["PATH"] = "${bin}:${System.getenv("PATH")}" }
             .start()
