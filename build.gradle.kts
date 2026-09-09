@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     id("hydraulic.kotlin-common-conventions")
     id("org.graalvm.buildtools.native") version "1.1.9"
@@ -23,6 +25,11 @@ dependencies {
 application {
     mainClass.set("hydraulic.url.URLKt")
     applicationName = "url"
+    applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
+}
+
+tasks.withType<Test>().configureEach {
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
 }
 
 graalvmNative {

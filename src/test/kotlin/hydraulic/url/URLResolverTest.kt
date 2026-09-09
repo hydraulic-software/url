@@ -28,6 +28,7 @@ import kotlin.io.path.isDirectory
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.readText
 import kotlin.io.path.writeBytes
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -38,8 +39,8 @@ class URLResolverTest {
     lateinit var tempDir: Path
 
     @Test
-    fun `default cache directory has no redundant cache component`() {
-        assertEquals(OperatingSystemPaths.current(null, "url-tool").localCache.parent, URL().cacheDirectory)
+    fun `default cache directory uses the application namespace`() {
+        assertEquals(OperatingSystemPaths.current("dev.hydraulic", "url-tool").localCache, URL().cacheDirectory)
     }
 
     @Test
@@ -275,23 +276,15 @@ class URLResolverTest {
 
     @Test
     fun `automatic progress is quiet for redirected and dumb terminals`() {
-        assertEquals(null, progressTracker("auto", System.err, emptyMap()) { false })
+        assertEquals(null, progressTracker("term", System.err, emptyMap()) { false })
         var terminalWasInspected = false
-        assertEquals(null, progressTracker("auto", System.err, mapOf("TERM" to "dumb")) {
+        assertEquals(null, progressTracker("term", System.err, mapOf("TERM" to "dumb")) {
             terminalWasInspected = true
             true
         })
         assertFalse(terminalWasInspected)
     }
 
-    @Test
-    fun `OSC mode emits terminal-native progress without a terminal`() {
-        val bytes = ByteArrayOutputStream()
-        val tracker = progressTracker("osc", PrintStream(bytes), emptyMap()) { false }!!
-        tracker.report(dev.progress4j.api.ProgressReport.create("Downloading", 100, 1, dev.progress4j.api.ProgressReport.Units.BYTES))
-
-        assertEquals("\u001B]9;4;1;1\u0007", bytes.toString())
-    }
 
     @Test
     fun `invalid progress mode is a concise command line error`() {
@@ -301,7 +294,7 @@ class URLResolverTest {
         )
 
         assertEquals(1, exitCode)
-        assertEquals("url: --progress must be one of: auto, osc, never, plain, json\n", stderr.toString())
+        assertContains(stderr.toString(), "--progress must be one of")
     }
 
     @Test

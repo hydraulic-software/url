@@ -29,10 +29,14 @@ dependencies {
 application {
     mainClass.set("hydraulic.url.URLKt")
     applicationName = "url"
+    applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
 }
 
 kotlin { jvmToolchain(25) }
-tasks.test { useJUnitPlatform() }
+tasks.test {
+    useJUnitPlatform()
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+}
 
 graalvmNative {
     binaries.named("main") {

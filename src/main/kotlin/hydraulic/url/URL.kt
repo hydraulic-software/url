@@ -13,6 +13,10 @@ import picocli.CommandLine.Command
 import picocli.CommandLine.Mixin
 import picocli.CommandLine.Option
 import picocli.CommandLine.Parameters
+import java.lang.foreign.FunctionDescriptor
+import java.lang.foreign.Linker
+import java.lang.foreign.ValueLayout
+import java.lang.invoke.MethodHandle
 import java.net.URI
 import java.io.PrintStream
 import java.nio.file.Path
@@ -46,8 +50,8 @@ class URL : Callable<Int> {
     @Option(
         names = ["--progress"],
         paramLabel = "MODE",
-        defaultValue = "auto",
-        description = ["Progress on stderr: auto, osc, never, plain, or json (default: ${'$'}{DEFAULT-VALUE})."]
+        defaultValue = "term",
+        description = ["Write progress indicators to stderr: bar (animated unicode progress bar), term (OSC escapes for terminal emulator rendered bars), never, plain, or json (default: ${'$'}{DEFAULT-VALUE}). If stderr isn't a terminal then bar/term have no effect."]
     )
     lateinit var progress: String
 
@@ -91,25 +95,38 @@ internal fun progressTracker(
     stderr: PrintStream,
     environment: Map<String, String>,
     stderrInteractive: () -> Boolean
-): ProgressReport.Tracker? = when (mode) {
-    "never" -> null
-    "plain" -> ProgressPacer(ProgressPrinter(stderr), 4.0f)
-    "json" -> ProgressPacer(ProgressJSONWriter(stderr.writer()), 30.0f)
-    "osc" -> OscProgressBarTracker(stderr::print)
-    "auto" -> if (environment["TERM"] != "dumb" && stderrInteractive()) {
-        TerminalProgressTracker.forOutput(stderr, "NO_COLOR" !in environment)
-    } else {
-        null
+): ProgressReport.Tracker? {
+    val smartTerm = environment["TERM"] != "dumb" && stderrInteractive()
+    return when (mode) {
+        "never" -> null
+        "plain" -> ProgressPacer(ProgressPrinter(stderr), 4.0f)
+        "json" -> ProgressPacer(ProgressJSONWriter(stderr.writer()), 30.0f)
+        "term" -> if (smartTerm) OscProgressBarTracker(stderr::print) else null
+        "bar" -> if (smartTerm) TerminalProgressTracker.forOutput(stderr, "NO_COLOR" !in environment) else null
+        else -> throw IllegalArgumentException("--progress must be one of: never, plain, json, term or bar")
     }
-    else -> throw IllegalArgumentException("--progress must be one of: auto, osc, never, plain, json")
 }
 
 internal fun isStderrInteractive(): Boolean {
-    if (System.getProperty("os.name").startsWith("Windows"))
-        return System.console() != null
     return runCatching {
-        ProcessBuilder("/usr/bin/test", "-t", "2").inheritIO().start().waitFor() == 0
+        (ISATTY?.invokeWithArguments(STANDARD_ERROR_FILENO) as? Int ?: 0) != 0
     }.getOrDefault(false)
+}
+
+private const val STANDARD_ERROR_FILENO = 2
+
+private val ISATTY: MethodHandle? by lazy {
+    runCatching {
+        val linker = Linker.nativeLinker()
+        val lookup = linker.defaultLookup()
+        sequenceOf("isatty", "_isatty").firstNotNullOfOrNull { lookup.find(it).orElse(null) }
+            ?.let { symbol ->
+                linker.downcallHandle(
+                    symbol,
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT)
+                )
+            }
+    }.getOrNull()
 }
 
 internal fun parseURL(url: String): URI = URI(if (URL_SCHEME.matchesAt(url, 0)) url else "https://$url")
