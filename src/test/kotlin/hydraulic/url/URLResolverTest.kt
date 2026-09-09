@@ -11,6 +11,7 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
+import java.io.PrintStream
 import java.io.PrintWriter
 import java.io.StringReader
 import java.io.StringWriter
@@ -254,6 +255,44 @@ class URLResolverTest {
 
         assertEquals(1, exitCode)
         assertEquals("url: Not an HTTP(S) URI: file:///tmp/not-http\n", stderr.toString())
+    }
+
+    @Test
+    fun `progress modes write only to their selected stderr stream`() {
+        val plainBytes = ByteArrayOutputStream()
+        val plain = progressTracker("plain", PrintStream(plainBytes), emptyMap()) { false }!!
+        plain.report(dev.progress4j.api.ProgressReport.create("Downloading", 10, 5, dev.progress4j.api.ProgressReport.Units.BYTES))
+        (plain as AutoCloseable).close()
+        assertTrue(plainBytes.toString().contains("Downloading"))
+
+        val jsonBytes = ByteArrayOutputStream()
+        val json = progressTracker("json", PrintStream(jsonBytes), emptyMap()) { false }!!
+        json.report(dev.progress4j.api.ProgressReport.create("Downloading", 10, 5, dev.progress4j.api.ProgressReport.Units.BYTES))
+        (json as AutoCloseable).close()
+        assertTrue(jsonBytes.toString().contains("\"type\": \"progress\""))
+        assertEquals(null, progressTracker("never", System.err, emptyMap()) { true })
+    }
+
+    @Test
+    fun `automatic progress is quiet for redirected and dumb terminals`() {
+        assertEquals(null, progressTracker("auto", System.err, emptyMap()) { false })
+        var terminalWasInspected = false
+        assertEquals(null, progressTracker("auto", System.err, mapOf("TERM" to "dumb")) {
+            terminalWasInspected = true
+            true
+        })
+        assertFalse(terminalWasInspected)
+    }
+
+    @Test
+    fun `invalid progress mode is a concise command line error`() {
+        val stderr = StringWriter()
+        val exitCode = commandLine().apply { err = PrintWriter(stderr) }.execute(
+            "--progress", "loud", "https://example.com/file"
+        )
+
+        assertEquals(1, exitCode)
+        assertEquals("url: --progress must be one of: auto, never, plain, json\n", stderr.toString())
     }
 
     @Test

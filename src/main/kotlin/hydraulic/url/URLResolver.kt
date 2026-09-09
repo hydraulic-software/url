@@ -1,5 +1,6 @@
 package hydraulic.url
 
+import dev.progress4j.api.ProgressReport
 import hydraulic.diskcache.DiskCache
 import hydraulic.diskcache.http.HttpResourceCache
 import hydraulic.diskcache.http.HttpStatusException
@@ -16,7 +17,11 @@ import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 
 /** Resolves ordinary HTTP resources and paths within remotely hosted archives. */
-class URLResolver(private val cache: DiskCache, private val resources: HttpResourceCache = HttpResourceCache(cache)) {
+class URLResolver(
+    private val cache: DiskCache,
+    progressTracker: ProgressReport.Tracker? = null,
+    private val resources: HttpResourceCache = HttpResourceCache(cache, progressTracker = progressTracker)
+) {
     fun resolve(uri: URI, cacheIdentity: URI = uri): ResolvedURL {
         val expectedHash = sha256Lock(uri)
         val resolved = resolveWithoutHashLock(uri.withoutFragment(), cacheIdentity.withoutFragment())

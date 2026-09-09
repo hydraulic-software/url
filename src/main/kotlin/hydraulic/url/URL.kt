@@ -1,5 +1,10 @@
 package hydraulic.url
 
+import dev.progress4j.api.ProgressReport
+import dev.progress4j.terminal.TerminalProgressTracker
+import dev.progress4j.utils.ProgressJSONWriter
+import dev.progress4j.utils.ProgressPacer
+import dev.progress4j.utils.ProgressPrinter
 import hydraulic.diskcache.LocalDiskCache
 import hydraulic.utils.os.OperatingSystemPaths
 import picocli.CommandLine
@@ -8,6 +13,7 @@ import picocli.CommandLine.Mixin
 import picocli.CommandLine.Option
 import picocli.CommandLine.Parameters
 import java.net.URI
+import java.io.PrintStream
 import java.nio.file.Path
 import java.util.concurrent.Callable
 
@@ -36,6 +42,14 @@ class URL : Callable<Int> {
     @Option(names = ["--print-separator"], paramLabel = "CHAR", description = ["Terminate each returned path with this character."])
     var printSeparator: String? = null
 
+    @Option(
+        names = ["--progress"],
+        paramLabel = "MODE",
+        defaultValue = "auto",
+        description = ["Progress on stderr: auto, never, plain, or json (default: ${'$'}{DEFAULT-VALUE})."]
+    )
+    lateinit var progress: String
+
     @Mixin
     lateinit var cacheConfiguration: LocalDiskCache.Configuration
 
@@ -45,25 +59,55 @@ class URL : Callable<Int> {
         val inputs = urls.ifEmpty { readURLsFromStdin() }
         require(inputs.isNotEmpty()) { "No URLs were supplied as arguments or on stdin" }
         require(cacheKeyURL == null || inputs.size == 1) { "--cache-key-url requires exactly one input URL" }
+        val progressTracker = progressTracker(progress, System.err, System.getenv(), ::isStderrInteractive)
         val separator = when {
             print0 -> '\u0000'
             printSeparator != null -> printSeparator!![0]
             else -> '\n'
         }
         cacheConfiguration.directoryLockFileName = "LOCK"
-        LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
-            for (input in inputs) {
-                val uri = parseURL(input)
-                URLResolver(cache).resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri).use { resolved ->
-                    // Keep stdout machine-readable: diagnostics and progress must
-                    // use stderr, because callers commonly embed this command in command substitution.
-                    print(resolved.path.toAbsolutePath())
-                    print(separator)
+        try {
+            LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
+                for (input in inputs) {
+                    val uri = parseURL(input)
+                    URLResolver(cache, progressTracker).resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri).use { resolved ->
+                        // Keep stdout machine-readable: diagnostics and progress must
+                        // use stderr, because callers commonly embed this command in command substitution.
+                        print(resolved.path.toAbsolutePath())
+                        print(separator)
+                    }
                 }
             }
+        } finally {
+            (progressTracker as? AutoCloseable)?.close()
         }
         return 0
     }
+}
+
+internal fun progressTracker(
+    mode: String,
+    stderr: PrintStream,
+    environment: Map<String, String>,
+    stderrInteractive: () -> Boolean
+): ProgressReport.Tracker? = when (mode) {
+    "never" -> null
+    "plain" -> ProgressPacer(ProgressPrinter(stderr), 4.0f)
+    "json" -> ProgressPacer(ProgressJSONWriter(stderr.writer()), 30.0f)
+    "auto" -> if (environment["TERM"] != "dumb" && stderrInteractive()) {
+        TerminalProgressTracker.forOutput(stderr, "NO_COLOR" !in environment)
+    } else {
+        null
+    }
+    else -> throw IllegalArgumentException("--progress must be one of: auto, never, plain, json")
+}
+
+internal fun isStderrInteractive(): Boolean {
+    if (System.getProperty("os.name").startsWith("Windows"))
+        return System.console() != null
+    return runCatching {
+        ProcessBuilder("/usr/bin/test", "-t", "2").inheritIO().start().waitFor() == 0
+    }.getOrDefault(false)
 }
 
 internal fun parseURL(url: String): URI = URI(if (URL_SCHEME.matchesAt(url, 0)) url else "https://$url")

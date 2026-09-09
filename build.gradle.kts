@@ -11,6 +11,8 @@ dependencies {
     implementation(project(":hydraulic.utils"))
     implementation(project(":hydraulic.utils.hashing"))
     implementation("dev.progress4j:progress-api")
+    implementation("dev.progress4j:progress-terminal")
+    implementation("dev.progress4j:progress-utils")
     implementation(libs.info.picocli)
     kapt(libs.info.picocli.codegen)
     runtimeOnly(libs.org.tinylog.impl)

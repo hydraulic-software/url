@@ -22,6 +22,13 @@ HTTP requests honor the conventional `http_proxy`, `https_proxy`, and
 `no_proxy` accepts comma-separated hosts or domain suffixes, optional ports,
 and `*` to bypass proxies for every request.
 
+Downloads show animated progress on stderr when stderr is an interactive
+terminal, so stdout remains safe for command substitution such as
+`path=$(url example.com/archive.zip/file)`. Use `--progress=never` to disable
+progress, `--progress=plain` for line-oriented human output, or
+`--progress=json` for Progress4J JSON Lines. Automatic mode is quiet when
+stderr is redirected or `TERM=dumb`, and honors `NO_COLOR`.
+
 This is a standalone Gradle project that can also be included as a module in
 the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,
 tests, and GitHub Actions workflow are self-contained. The JARs in `libs/` are

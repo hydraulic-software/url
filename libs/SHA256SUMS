@@ -1,8 +1,9 @@
-a5cdd7f7c8f66aa2e2cac60d645e2c8669a4e45d9650c486f75d9bba984973d3  dev.hydraulic.types-1.0.jar
-47ac7e53ae41fc584de9c1aca1ea27d2782532639587b1c4250062f49a23eded  hydraulic.archives-22.2.100.jar
-504ca07704b3384d1f3232d1ba5021bdcaf8c307d6624c52d1576061d5cce6ba  hydraulic.diskcache-22.2.100.jar
-a886fb6698142ed2d6d81c716383bcd0ca2e0375d37390419a15a58a08b3f8c7  hydraulic.types-22.2.100.jar
-a0d2c33524379304a95dc127c727518762f92cfcf4b1cd70c86229521616d5ad  hydraulic.utils-22.2.100.jar
-4eccd9fb94f40c858ae8ef98ac1ccf0b573e0e5805ea3e53a33a783534959540  hydraulic.utils.hashing-22.2.100.jar
-715e1d7c20d51f7a7d781726db366e59b2080f2a9d8fc2bff5323ba30694b0cc  progress4j-api-0.1.jar
-4b50b02c9be2b7fc2c2d1d0ce13f4cbaba6f7fe62ec6a5b65e88f2eb96225b83  progress4j-utils-0.1.jar
+a5cdd7f7c8f66aa2e2cac60d645e2c8669a4e45d9650c486f75d9bba984973d3  libs/dev.hydraulic.types-1.0.jar
+47ac7e53ae41fc584de9c1aca1ea27d2782532639587b1c4250062f49a23eded  libs/hydraulic.archives-22.2.100.jar
+5cf8da5be7a04042433c906c1cd48ffff7ff85a59ab177ca8876ab4ecb84bfa9  libs/hydraulic.diskcache-22.2.100.jar
+a886fb6698142ed2d6d81c716383bcd0ca2e0375d37390419a15a58a08b3f8c7  libs/hydraulic.types-22.2.100.jar
+a0d2c33524379304a95dc127c727518762f92cfcf4b1cd70c86229521616d5ad  libs/hydraulic.utils-22.2.100.jar
+4eccd9fb94f40c858ae8ef98ac1ccf0b573e0e5805ea3e53a33a783534959540  libs/hydraulic.utils.hashing-22.2.100.jar
+715e1d7c20d51f7a7d781726db366e59b2080f2a9d8fc2bff5323ba30694b0cc  libs/progress4j-api-0.1.jar
+10f7ddfaec6aa1fdbcd40bbcbe0b25863ddd4d1222929a4a6f9e6d6e25ae1fbc  libs/progress4j-terminal-0.1.jar
+4b50b02c9be2b7fc2c2d1d0ce13f4cbaba6f7fe62ec6a5b65e88f2eb96225b83  libs/progress4j-utils-0.1.jar
