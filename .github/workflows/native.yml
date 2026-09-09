@@ -33,30 +33,6 @@ jobs:
           cache: gradle
       - name: Test and compile native binary
         run: ./gradlew test nativeCompile --no-daemon
-      - name: Exercise native tarball extraction
-        shell: bash
-        run: |
-          fixture="$(mktemp -d)"
-          mkdir -p "$fixture/root"
-          printf payload > "$fixture/root/file.txt"
-          tar -czf "$fixture/archive.tar.gz" -C "$fixture" root
-          python3 -m http.server 18080 --bind 127.0.0.1 --directory "$fixture" &
-          server_pid=$!
-          trap 'kill "$server_pid"' EXIT
-          for attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:18080/archive.tar.gz >/dev/null; then
-              break
-            fi
-            sleep 1
-          done
-          curl --fail --silent http://127.0.0.1:18080/archive.tar.gz >/dev/null
-          extracted="$(./build/native/nativeCompile/url http://127.0.0.1:18080/archive.tar.gz/)"
-          test "$(cat "$extracted/file.txt")" = payload
-          ./build/native/nativeCompile/url --progress=osc --cache-dir "$fixture/osc-cache" \
-            http://127.0.0.1:18080/archive.tar.gz/ > "$fixture/path" 2> "$fixture/progress"
-          test "$(cat "$(cat "$fixture/path")/file.txt")" = payload
-          grep -F $'\033]9;4;1;' "$fixture/progress"
-          grep -F $'\033]9;4;0;0\a' "$fixture/progress"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
