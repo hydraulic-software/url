@@ -43,7 +43,13 @@ jobs:
           python3 -m http.server 18080 --bind 127.0.0.1 --directory "$fixture" &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
-          sleep 1
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18080/archive.tar.gz >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:18080/archive.tar.gz >/dev/null
           extracted="$(./build/native/nativeCompile/url http://127.0.0.1:18080/archive.tar.gz/)"
           test "$(cat "$extracted/file.txt")" = payload
       - uses: actions/upload-artifact@v4
