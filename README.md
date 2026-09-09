@@ -17,6 +17,11 @@ Append `#sha256=<64 hex characters>` to require that the final resolved file
 has the given SHA-256 digest. The fragment is not sent to the server and works
 for both ordinary downloads and individual files selected from archives.
 
+HTTP requests honor the conventional `http_proxy`, `https_proxy`, and
+`no_proxy` environment variables (with uppercase aliases also accepted).
+`no_proxy` accepts comma-separated hosts or domain suffixes, optional ports,
+and `*` to bypass proxies for every request.
+
 This is a standalone Gradle project that can also be included as a module in
 the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,
 tests, and GitHub Actions workflow are self-contained. The JARs in `libs/` are
