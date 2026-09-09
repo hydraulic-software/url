@@ -148,6 +148,37 @@ class URLResolverTest {
     }
 
     @Test
+    fun `SHA-256 fragment locks the final resolved file`() = withServer { server ->
+        val contents = "locked contents".toByteArray()
+        val requestTargets = mutableListOf<String>()
+        server.createContext("/") { exchange ->
+            requestTargets += exchange.requestURI.toASCIIString()
+            exchange.respond(contents)
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache).resolve(server.uri("/locked#sha256=${contents.sha256()}")).use { resolved ->
+                assertEquals("locked contents", resolved.path.readText())
+            }
+            val exception = assertFailsWith<IllegalArgumentException> {
+                URLResolver(cache).resolve(server.uri("/locked#sha256=${"0".repeat(64)}"))
+            }
+            assertTrue(exception.message!!.startsWith("SHA-256 mismatch"))
+        }
+        assertEquals(listOf("/locked"), requestTargets)
+    }
+
+    @Test
+    fun `SHA-256 lock requires a complete hexadecimal digest`() {
+        makeCache().use { cache ->
+            val exception = assertFailsWith<IllegalArgumentException> {
+                URLResolver(cache).resolve(URI("https://example.com/file#sha256=1234"))
+            }
+            assertEquals("Invalid SHA-256 lock: expected 64 hexadecimal characters", exception.message)
+        }
+    }
+
+    @Test
     fun `local extraction does not write traversal entries outside its destination`() {
         val archive = tempDir / "traversal.zip"
         archive.writeBytes(zipOf("../escaped" to "bad"))
@@ -266,5 +297,11 @@ class URLResolverTest {
     private fun HttpExchange.respond404() {
         sendResponseHeaders(404, -1)
         close()
+    }
+
+    private fun ByteArray.sha256(): String {
+        val file = tempDir / "hash-input-${hashCode()}"
+        file.writeBytes(this)
+        return file.sha256()
     }
 }

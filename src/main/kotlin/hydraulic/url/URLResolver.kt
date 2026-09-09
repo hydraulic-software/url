@@ -6,14 +6,36 @@ import hydraulic.diskcache.http.HttpStatusException
 import hydraulic.archives.extractLocalArchive
 import hydraulic.utils.hashing.fingerprint
 import java.net.URI
+import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
+import java.util.HexFormat
 import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 
 /** Resolves ordinary HTTP resources and paths within remotely hosted archives. */
 class URLResolver(private val cache: DiskCache, private val resources: HttpResourceCache = HttpResourceCache(cache)) {
     fun resolve(uri: URI, cacheIdentity: URI = uri): ResolvedURL {
+        val expectedHash = sha256Lock(uri)
+        val resolved = resolveWithoutHashLock(uri.withoutFragment(), cacheIdentity.withoutFragment())
+        if (expectedHash == null)
+            return resolved
+        try {
+            require(resolved.path.isRegularFile()) { "SHA-256 locking requires a file result" }
+            val actualHash = resolved.path.sha256()
+            require(actualHash.equals(expectedHash, ignoreCase = true)) {
+                "SHA-256 mismatch: expected $expectedHash but resolved $actualHash"
+            }
+            return resolved
+        } catch (e: Exception) {
+            resolved.close()
+            throw e
+        }
+    }
+
+    private fun resolveWithoutHashLock(uri: URI, cacheIdentity: URI): ResolvedURL {
         val archive = parseArchiveURL(uri)
         if (archive != null && archive.member.isEmpty() && uri.rawPath.endsWith('/'))
             return resolveArchive(archive, cacheIdentity)
@@ -58,6 +80,31 @@ class URLResolver(private val cache: DiskCache, private val resources: HttpResou
     }
 
     private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(directory.listDirectoryEntries().single(), this)
+}
+
+private fun sha256Lock(uri: URI): String? {
+    val fragment = uri.rawFragment ?: return null
+    if (!fragment.startsWith("sha256="))
+        return null
+    return fragment.removePrefix("sha256=").also {
+        require(it.matches(Regex("[0-9A-Fa-f]{64}"))) { "Invalid SHA-256 lock: expected 64 hexadecimal characters" }
+    }
+}
+
+private fun URI.withoutFragment(): URI = rawFragment?.let { URI(toASCIIString().substringBefore('#')) } ?: this
+
+internal fun Path.sha256(): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    Files.newInputStream(this).use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0)
+                break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return HexFormat.of().formatHex(digest.digest())
 }
 
 internal fun extractedArchiveCacheKey(archive: Path): String = """

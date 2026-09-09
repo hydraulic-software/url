@@ -10,6 +10,10 @@ Blank lines and lines whose first non-whitespace character is `#` are ignored.
 Each resulting path is newline-terminated by default; use `--print0` for NUL
 termination or `--print-separator=:` to construct output such as a classpath.
 
+Append `#sha256=<64 hex characters>` to require that the final resolved file
+has the given SHA-256 digest. The fragment is not sent to the server and works
+for both ordinary downloads and individual files selected from archives.
+
 This is a standalone Gradle project that can also be included as a module in
 the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,
 tests, and GitHub Actions workflow are self-contained. The JARs in `libs/` are
