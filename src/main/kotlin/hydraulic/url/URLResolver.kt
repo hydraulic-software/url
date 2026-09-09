@@ -9,12 +9,17 @@ import hydraulic.diskcache.http.JdkHttpTransport
 import hydraulic.archives.extractLocalArchive
 import hydraulic.utils.hashing.fingerprint
 import java.net.URI
+import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.UserDefinedFileAttributeView
 import java.security.MessageDigest
+import java.time.Instant
 import java.util.HexFormat
+import java.util.UUID
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
@@ -24,6 +29,7 @@ import kotlin.io.path.name
 class URLResolver(
     private val cache: DiskCache,
     progressTracker: ProgressReport.Tracker? = null,
+    private val gatekeeper: Boolean = true,
     private val resources: HttpResourceCache = HttpResourceCache(
         cache,
         transport = UserAgentHttpTransport(),
@@ -42,6 +48,7 @@ class URLResolver(
                 }
             }
             resolved.path.makeExecutableIfRecognized()
+            resolved.path.applyGatekeeperQuarantine(gatekeeper)
             return resolved
         } catch (e: Exception) {
             resolved.close()
@@ -129,7 +136,16 @@ private fun isExecutableContent(prefix: ByteArray): Boolean {
     if (prefix.size < 4)
         return false
     val magic = prefix.uint32(0, littleEndian = false)
-    if (magic in THIN_EXECUTABLE_MAGICS)
+    if (magic == ELF_MAGIC || isMachOContent(prefix))
+        return true
+    return false
+}
+
+private fun isMachOContent(prefix: ByteArray): Boolean {
+    if (prefix.size < 4)
+        return false
+    val magic = prefix.uint32(0, littleEndian = false)
+    if (magic in THIN_MACH_O_MAGICS)
         return true
     if (prefix.size < 8)
         return false
@@ -143,6 +159,24 @@ private fun isExecutableContent(prefix: ByteArray): Boolean {
     return architectureCount in 1u..32u
 }
 
+internal fun Path.applyGatekeeperQuarantine(enabled: Boolean) {
+    if (!enabled || !IS_MAC_OS || !isRegularFile())
+        return
+    val prefix = Files.newInputStream(this).use { it.readNBytes(8) }
+    if (!isMachOContent(prefix))
+        return
+    val attributes = Files.getFileAttributeView(this, UserDefinedFileAttributeView::class.java) ?: return
+    if (QUARANTINE_ATTRIBUTE in attributes.list())
+        return
+    val value = gatekeeperQuarantineValue().toByteArray(StandardCharsets.UTF_8)
+    attributes.write(QUARANTINE_ATTRIBUTE, ByteBuffer.wrap(value))
+}
+
+internal fun gatekeeperQuarantineValue(
+    instant: Instant = Instant.now(),
+    id: UUID = UUID.randomUUID()
+): String = "0081;${instant.epochSecond.toString(16)};Hydraulic URL;$id"
+
 private fun ByteArray.uint32(offset: Int, littleEndian: Boolean): UInt {
     val bytes = if (littleEndian) (offset + 3 downTo offset) else (offset..offset + 3)
     return bytes.fold(0u) { value, index -> (value shl 8) or this[index].toUByte().toUInt() }
@@ -154,14 +188,17 @@ private val EXECUTE_PERMISSIONS = setOf(
     PosixFilePermission.OTHERS_EXECUTE
 )
 
-private val THIN_EXECUTABLE_MAGICS = setOf(
-    0x7f454c46u, // ELF
+private const val ELF_MAGIC = 0x7f454c46u
+
+private val THIN_MACH_O_MAGICS = setOf(
     0xfeedfaceu, 0xcefaedfeu, // 32-bit Mach-O
     0xfeedfacfu, 0xcffaedfeu  // 64-bit Mach-O
 )
 
 private val FAT_BIG_ENDIAN_MAGICS = setOf(0xcafebabeu, 0xcafebabfu)
 private val FAT_LITTLE_ENDIAN_MAGICS = setOf(0xbebafecau, 0xbfbafecau)
+private const val QUARANTINE_ATTRIBUTE = "com.apple.quarantine"
+private val IS_MAC_OS = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)
 
 internal const val USER_AGENT = "Hydraulic URL/1.0"
 

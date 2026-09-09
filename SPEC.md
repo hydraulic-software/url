@@ -44,6 +44,8 @@ inputs must use HTTP or HTTPS.
 - `--progress=MODE`: select `never`, `plain`, `json`, `term`, or `bar` progress.
   Progress is diagnostic output and must not be written to standard output.
   Its wording, frequency, rendering, and terminal detection are non-normative.
+- `--no-gatekeeper`: do not attach macOS Gatekeeper quarantine metadata to a
+  resolved Mach-O file.
 
 Unknown options and missing or malformed values must fail. Options may also use
 the separated form, for example `--cache-dir PATH`.

@@ -17,10 +17,15 @@ import java.io.StringReader
 import java.io.StringWriter
 import java.net.InetSocketAddress
 import java.net.URI
+import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.UserDefinedFileAttributeView
+import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -228,6 +233,34 @@ class URLResolverTest {
         file.makeExecutableIfRecognized()
 
         assertEquals(initial, Files.getPosixFilePermissions(file))
+    }
+
+    @Test
+    fun `quarantine provenance has the macOS download format`() {
+        assertEquals(
+            "0081;5f5e100;Hydraulic URL;12345678-1234-1234-1234-123456789abc",
+            gatekeeperQuarantineValue(
+                Instant.ofEpochSecond(100_000_000),
+                UUID.fromString("12345678-1234-1234-1234-123456789abc")
+            )
+        )
+    }
+
+    @Test
+    fun `macOS Mach-O results receive quarantine unless opted out`() = withServer { server ->
+        if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true))
+            return@withServer
+        server.createContext("/") { it.respond(bytes(0xfeedfacf.toInt()) + " payload".toByteArray()) }
+
+        makeCache().use { cache ->
+            URLResolver(cache).resolve(server.uri("/enabled")).use { resolved ->
+                assertContains(resolved.path.userAttribute("com.apple.quarantine"), ";Hydraulic URL;")
+            }
+            URLResolver(cache, gatekeeper = false).resolve(server.uri("/disabled")).use { resolved ->
+                val attributes = Files.getFileAttributeView(resolved.path, UserDefinedFileAttributeView::class.java)
+                assertFalse("com.apple.quarantine" in attributes.list())
+            }
+        }
     }
 
     @Test
@@ -480,4 +513,12 @@ class URLResolverTest {
         (value ushr 8).toByte(),
         value.toByte()
     )
+
+    private fun Path.userAttribute(name: String): String {
+        val attributes = Files.getFileAttributeView(this, UserDefinedFileAttributeView::class.java)
+        val buffer = ByteBuffer.allocate(attributes.size(name))
+        attributes.read(name, buffer)
+        buffer.flip()
+        return StandardCharsets.UTF_8.decode(buffer).toString()
+    }
 }

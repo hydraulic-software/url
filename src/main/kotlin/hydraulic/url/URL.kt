@@ -47,6 +47,9 @@ class URL : Callable<Int> {
     @Option(names = ["--print-separator"], paramLabel = "CHAR", description = ["Terminate each returned path with this character."])
     var printSeparator: String? = null
 
+    @Option(names = ["--no-gatekeeper"], description = ["Do not attach macOS Gatekeeper quarantine metadata to Mach-O results."])
+    var noGatekeeper: Boolean = false
+
     @Option(
         names = ["--progress"],
         paramLabel = "MODE",
@@ -75,7 +78,7 @@ class URL : Callable<Int> {
             LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
                 for (input in inputs) {
                     val uri = parseURL(input)
-                    URLResolver(cache, progressTracker).resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri).use { resolved ->
+                    URLResolver(cache, progressTracker, gatekeeper = !noGatekeeper).resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri).use { resolved ->
                         // Keep stdout machine-readable: diagnostics and progress must
                         // use stderr, because callers commonly embed this command in command substitution.
                         print(resolved.path.toAbsolutePath())

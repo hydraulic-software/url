@@ -19,7 +19,8 @@ has the given SHA-256 digest. The fragment is not sent to the server and works
 for both ordinary downloads and individual files selected from archives.
 
 On Unix-like systems, resolved hashbang scripts and ELF, Mach-O, or fat Mach-O
-binaries automatically gain execute permission.
+binaries automatically gain execute permission. On macOS, Mach-O results also
+receive Gatekeeper quarantine metadata; use `--no-gatekeeper` to opt out.
 
 HTTP requests honor the conventional `http_proxy`, `https_proxy`, and
 `no_proxy` environment variables (with uppercase aliases also accepted).
