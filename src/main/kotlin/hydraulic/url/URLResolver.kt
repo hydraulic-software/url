@@ -3,6 +3,7 @@ package hydraulic.url
 import hydraulic.diskcache.DiskCache
 import hydraulic.diskcache.http.HttpResourceCache
 import hydraulic.diskcache.http.HttpStatusException
+import hydraulic.archives.extractLocalArchive
 import hydraulic.utils.hashing.fingerprint
 import java.net.URI
 import java.nio.file.Path
@@ -32,7 +33,7 @@ class URLResolver(private val cache: DiskCache, private val resources: HttpResou
         val downloaded = resources.resolve(archive.archiveURI, identityArchive.archiveURI)
         try {
             val archiveFile = downloaded.directory.listDirectoryEntries().single()
-            val key = "euphoria-extracted-archive-v1\n${archiveFile.name}\n${archiveFile.fingerprint()}"
+            val key = extractedArchiveCacheKey(archiveFile)
             val extracted = cache.get(key) { destination ->
                 // A version directory is packaging detail, not part of the URL's logical archive root.
                 extractLocalArchive(archiveFile, destination, skipSingleRoot = true)
@@ -58,6 +59,12 @@ class URLResolver(private val cache: DiskCache, private val resources: HttpResou
 
     private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(directory.listDirectoryEntries().single(), this)
 }
+
+internal fun extractedArchiveCacheKey(archive: Path): String = """
+    Extracted archive
+    File name: ${archive.name}
+    SHA-256: ${archive.fingerprint()}
+""".trimIndent()
 
 class ResolvedURL(val path: Path, private val entry: DiskCache.OpenedEntry) : AutoCloseable {
     override fun close() = entry.close()
@@ -88,4 +95,4 @@ internal fun parseArchiveURL(uri: URI): ArchiveURL? {
 
 private val ARCHIVE_SUFFIXES = listOf(".tar.gz", ".tar.bz2", ".tar.xz", ".tar.Z", ".zip", ".tar")
 
-private fun decodePathComponent(rawComponent: String): String = URI("https://euphoria.invalid/$rawComponent").path.removePrefix("/")
+private fun decodePathComponent(rawComponent: String): String = URI("https://hydraulic.invalid/$rawComponent").path.removePrefix("/")

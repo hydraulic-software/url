@@ -3,6 +3,7 @@ package hydraulic.url
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import hydraulic.diskcache.LocalDiskCache
+import hydraulic.archives.extractLocalArchive
 import hydraulic.utils.os.OperatingSystemPaths
 import org.apache.commons.compress.archivers.zip.UnixStat
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
@@ -44,6 +45,13 @@ class URLResolverTest {
         val parsed = parseArchiveURL(URI("https://example.com/releases/tool.tar.gz/bin/tool"))!!
         assertEquals(URI("https://example.com/releases/tool.tar.gz"), parsed.archiveURI)
         assertEquals(listOf("bin", "tool"), parsed.member)
+    }
+
+    @Test
+    fun `extracted archive cache keys are human readable documents`() {
+        val archive = tempDir / "tool.zip"
+        archive.writeBytes("contents".toByteArray())
+        assertTrue(extractedArchiveCacheKey(archive).matches(Regex("Extracted archive\\nFile name: tool\\.zip\\nSHA-256: [a-z0-9]+")))
     }
 
     @Test
