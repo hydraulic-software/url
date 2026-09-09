@@ -150,6 +150,21 @@ class URLResolverTest {
     }
 
     @Test
+    fun `HTTP requests identify the URL tool`() = withServer { server ->
+        var userAgent: String? = null
+        server.createContext("/") { exchange ->
+            userAgent = exchange.requestHeaders.getFirst("User-Agent")
+            exchange.respond("contents".toByteArray())
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache).resolve(server.uri("/user-agent")).close()
+        }
+
+        assertEquals(USER_AGENT, userAgent)
+    }
+
+    @Test
     fun `nested archive members resolve recursively`() = withServer { server ->
         val requests = mutableListOf<String>()
         val innerZip = zipOf("inner/file.txt" to "nested member")
@@ -256,6 +271,13 @@ class URLResolverTest {
 
         assertEquals(1, exitCode)
         assertEquals("url: Not an HTTP(S) URI: file:///tmp/not-http\n", stderr.toString())
+    }
+
+    @Test
+    fun `command line distinguishes usage errors from execution failures`() {
+        assertEquals(2, commandLine().execute("--does-not-exist"))
+        assertEquals(1, commandLine().execute("--print0", "--print-separator=:"))
+        assertEquals(0, commandLine().execute("--help"))
     }
 
     @Test

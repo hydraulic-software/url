@@ -4,6 +4,8 @@ import dev.progress4j.api.ProgressReport
 import hydraulic.diskcache.DiskCache
 import hydraulic.diskcache.http.HttpResourceCache
 import hydraulic.diskcache.http.HttpStatusException
+import hydraulic.diskcache.http.HttpTransport
+import hydraulic.diskcache.http.JdkHttpTransport
 import hydraulic.archives.extractLocalArchive
 import hydraulic.utils.hashing.fingerprint
 import java.net.URI
@@ -20,7 +22,11 @@ import kotlin.io.path.name
 class URLResolver(
     private val cache: DiskCache,
     progressTracker: ProgressReport.Tracker? = null,
-    private val resources: HttpResourceCache = HttpResourceCache(cache, progressTracker = progressTracker)
+    private val resources: HttpResourceCache = HttpResourceCache(
+        cache,
+        transport = UserAgentHttpTransport(),
+        progressTracker = progressTracker
+    )
 ) {
     fun resolve(uri: URI, cacheIdentity: URI = uri): ResolvedURL {
         val expectedHash = sha256Lock(uri)
@@ -102,6 +108,16 @@ class URLResolver(
         throw IllegalArgumentException("Archive member URLs require a matching archive-shaped --cache-key-url")
 
     private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(directory.listDirectoryEntries().single(), this)
+}
+
+internal const val USER_AGENT = "Hydraulic URL/1.0"
+
+/** Identifies this client without making the shared HTTP cache library URL-tool-specific. */
+internal class UserAgentHttpTransport(
+    private val delegate: HttpTransport = JdkHttpTransport()
+) : HttpTransport {
+    override fun get(uri: URI, headers: Map<String, String>): HttpTransport.Response =
+        delegate.get(uri, headers + ("User-Agent" to USER_AGENT))
 }
 
 private fun sha256Lock(uri: URI): String? {
