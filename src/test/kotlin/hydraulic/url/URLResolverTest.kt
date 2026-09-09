@@ -285,6 +285,17 @@ class URLResolverTest {
     }
 
     @Test
+    fun `ANSI mode can be captured without a terminal`() {
+        val bytes = ByteArrayOutputStream()
+        val tracker = progressTracker("ansi", PrintStream(bytes), emptyMap()) { false }!!
+        tracker.report(dev.progress4j.api.ProgressReport.create("Downloading", 100, 1, dev.progress4j.api.ProgressReport.Units.BYTES))
+        Thread.sleep(75)
+        (tracker as AutoCloseable).close()
+
+        assertTrue(bytes.toString().contains('\u001B'))
+    }
+
+    @Test
     fun `invalid progress mode is a concise command line error`() {
         val stderr = StringWriter()
         val exitCode = commandLine().apply { err = PrintWriter(stderr) }.execute(
@@ -292,7 +303,7 @@ class URLResolverTest {
         )
 
         assertEquals(1, exitCode)
-        assertEquals("url: --progress must be one of: auto, never, plain, json\n", stderr.toString())
+        assertEquals("url: --progress must be one of: auto, ansi, never, plain, json\n", stderr.toString())
     }
 
     @Test

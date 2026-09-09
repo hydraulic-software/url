@@ -46,7 +46,7 @@ class URL : Callable<Int> {
         names = ["--progress"],
         paramLabel = "MODE",
         defaultValue = "auto",
-        description = ["Progress on stderr: auto, never, plain, or json (default: ${'$'}{DEFAULT-VALUE})."]
+        description = ["Progress on stderr: auto, ansi, never, plain, or json (default: ${'$'}{DEFAULT-VALUE})."]
     )
     lateinit var progress: String
 
@@ -94,12 +94,13 @@ internal fun progressTracker(
     "never" -> null
     "plain" -> ProgressPacer(ProgressPrinter(stderr), 4.0f)
     "json" -> ProgressPacer(ProgressJSONWriter(stderr.writer()), 30.0f)
+    "ansi" -> TerminalProgressTracker.forOutput(stderr, "NO_COLOR" !in environment)
     "auto" -> if (environment["TERM"] != "dumb" && stderrInteractive()) {
         TerminalProgressTracker.forOutput(stderr, "NO_COLOR" !in environment)
     } else {
         null
     }
-    else -> throw IllegalArgumentException("--progress must be one of: auto, never, plain, json")
+    else -> throw IllegalArgumentException("--progress must be one of: auto, ansi, never, plain, json")
 }
 
 internal fun isStderrInteractive(): Boolean {

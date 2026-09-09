@@ -29,6 +29,10 @@ progress, `--progress=plain` for line-oriented human output, or
 `--progress=json` for Progress4J JSON Lines. Automatic mode is quiet when
 stderr is redirected or `TERM=dumb`, and honors `NO_COLOR`.
 
+Use `--progress=ansi` to force the animated escape stream even when stderr is
+redirected, for example `url --progress=ansi example.com/file 2>progress.log`.
+This is useful for terminal coordinators and testing progress rendering.
+
 This is a standalone Gradle project that can also be included as a module in
 the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,
 tests, and GitHub Actions workflow are self-contained. The JARs in `libs/` are
