@@ -13,6 +13,7 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.UserDefinedFileAttributeView
@@ -62,7 +63,7 @@ class URLResolver(
         if (archive != null && archive.member.isEmpty() && uri.rawPath.endsWith('/'))
             return resolveArchive(archive, identityArchive ?: invalidArchiveIdentity())
         try {
-            return resources.resolve(uri, cacheIdentity).asSingleFile()
+            return resolveResource(uri, cacheIdentity).asSingleFile()
         } catch (e: HttpStatusException) {
             if (e.statusCode != 404)
                 throw e
@@ -72,6 +73,30 @@ class URLResolver(
             archive ?: throw HttpStatusException(uri, 404),
             identityArchive ?: invalidArchiveIdentity()
         )
+    }
+
+    private fun resolveResource(uri: URI, cacheIdentity: URI): DiskCache.OpenedEntry {
+        val entry = resources.resolve(uri, cacheIdentity)
+        val file = entry.directory.listDirectoryEntries().single()
+        val policy = file.hashbangCachePolicy() ?: return entry
+        if (entry.metadata[HTTP_CACHE_CONTROL_METADATA] == policy)
+            return entry
+        val oldDirectory = entry.directory
+        val metadata = entry.metadata + (HTTP_CACHE_CONTROL_METADATA to policy)
+        entry.close()
+        return cache.getAndCustomizeEntry(HttpResourceCache.cacheKey(cacheIdentity), rerun = true) { destination ->
+            Files.walk(oldDirectory).use { paths ->
+                for (path in paths) {
+                    val relative = oldDirectory.relativize(path)
+                    val target = destination.resolve(relative)
+                    if (Files.isDirectory(path))
+                        Files.createDirectories(target)
+                    else
+                        Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES)
+                }
+            }
+            DiskCache.EntryComputationResult(metadata = metadata)
+        }
     }
 
     private fun resolveArchive(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
@@ -118,6 +143,25 @@ class URLResolver(
         throw IllegalArgumentException("Archive member URLs require a matching archive-shaped --cache-key-url")
 
     private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(directory.listDirectoryEntries().single(), this)
+}
+
+internal fun Path.hashbangCachePolicy(): String? {
+    if (!isRegularFile())
+        return null
+    val prefix = Files.newInputStream(this).use { it.readNBytes(MAX_HASHBANG_HEADER_BYTES) }
+    if (prefix.size < 2 || prefix[0] != '#'.code.toByte() || prefix[1] != '!'.code.toByte())
+        return null
+    val text = prefix.toString(StandardCharsets.UTF_8)
+    val firstNewline = text.indexOf('\n').takeIf { it >= 0 } ?: return null
+    val secondNewline = text.indexOf('\n', firstNewline + 1)
+    if (secondNewline < 0 && Files.size(this) > prefix.size)
+        return null
+    val secondLine = text.substring(firstNewline + 1, secondNewline.takeIf { it >= 0 } ?: text.length).trimEnd('\r')
+    val directive = CACHE_CONTROL_COMMENT.matchEntire(secondLine)?.groupValues?.get(1)?.trim() ?: return null
+    require(directive.isNotEmpty() && directive.all { it.code in 0x20..0x7e }) {
+        "Invalid hashbang Cache-Control directive"
+    }
+    return directive
 }
 
 internal fun Path.makeExecutableIfRecognized() {
@@ -199,6 +243,9 @@ private val FAT_BIG_ENDIAN_MAGICS = setOf(0xcafebabeu, 0xcafebabfu)
 private val FAT_LITTLE_ENDIAN_MAGICS = setOf(0xbebafecau, 0xbfbafecau)
 private const val QUARANTINE_ATTRIBUTE = "com.apple.quarantine"
 private val IS_MAC_OS = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)
+private const val HTTP_CACHE_CONTROL_METADATA = "http.cache-control"
+private val CACHE_CONTROL_COMMENT = Regex("#\\s*Cache-Control:\\s*(.*)", RegexOption.IGNORE_CASE)
+private const val MAX_HASHBANG_HEADER_BYTES = 8192
 
 internal const val USER_AGENT = "Hydraulic URL/1.0"
 

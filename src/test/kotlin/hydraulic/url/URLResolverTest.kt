@@ -278,6 +278,47 @@ class URLResolverTest {
     }
 
     @Test
+    fun `hashbang cache policy overrides origin freshness and survives revalidation`() = withServer { server ->
+        val requests = AtomicInteger()
+        server.createContext("/") { exchange ->
+            val request = requests.incrementAndGet()
+            exchange.responseHeaders.add("Cache-Control", "max-age=3600")
+            exchange.responseHeaders.add("ETag", "\"version-1\"")
+            if (request == 1) {
+                val body = "#!/bin/sh\n# Cache-Control: no-cache\necho hello\n".toByteArray()
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            } else {
+                assertEquals("\"version-1\"", exchange.requestHeaders.getFirst("If-None-Match"))
+                exchange.sendResponseHeaders(304, -1)
+                exchange.close()
+            }
+        }
+
+        makeCache().use { cache ->
+            val resolver = URLResolver(cache)
+            repeat(3) { resolver.resolve(server.uri("/script")).close() }
+        }
+
+        assertEquals(3, requests.get())
+    }
+
+    @Test
+    fun `cache policy comment must immediately follow the hashbang`() {
+        val accepted = tempDir / "accepted"
+        accepted.writeText("#!/usr/bin/env kotlin\n# cache-control: max-age=60\nprintln(1)\n")
+        assertEquals("max-age=60", accepted.hashbangCachePolicy())
+
+        val tooLate = tempDir / "too-late"
+        tooLate.writeText("#!/bin/sh\n# description\n# Cache-Control: no-cache\n")
+        assertEquals(null, tooLate.hashbangCachePolicy())
+
+        val binary = tempDir / "binary"
+        binary.writeBytes(byteArrayOf(0x7f, 0x45, 0x4c, 0x46, 0xff.toByte()))
+        assertEquals(null, binary.hashbangCachePolicy())
+    }
+
+    @Test
     fun `nested archive members resolve recursively`() = withServer { server ->
         val requests = mutableListOf<String>()
         val innerZip = zipOf("inner/file.txt" to "nested member")

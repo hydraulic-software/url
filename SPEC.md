@@ -68,6 +68,14 @@ owner, group, and other execute bits. All existing permission bits must be
 preserved. Other content and non-regular-file results must not gain execute
 permission from this rule.
 
+A hashbang text file may override the origin's HTTP cache policy with a second
+line of the form `# Cache-Control: DIRECTIVES` (case-insensitive field name).
+The directive must be non-empty printable ASCII and has the semantics of an
+HTTP `Cache-Control` field value. It replaces the origin cache-control value
+for freshness decisions and must remain effective across `304 Not Modified`
+revalidation. The comment has no effect unless it immediately follows the
+initial hashbang line.
+
 ### Archive members
 
 If requesting an input returns 404 and its path contains a supported archive

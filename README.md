@@ -22,6 +22,11 @@ On Unix-like systems, resolved hashbang scripts and ELF, Mach-O, or fat Mach-O
 binaries automatically gain execute permission. On macOS, Mach-O results also
 receive Gatekeeper quarantine metadata; use `--no-gatekeeper` to opt out.
 
+A hashbang script may override unusable or incorrect origin cache headers by
+placing `# Cache-Control: DIRECTIVES` on the line immediately after its
+hashbang. For example, `# Cache-Control: max-age=3600` keeps the cached script
+fresh for one hour, while `# Cache-Control: no-cache` revalidates every time.
+
 HTTP requests honor the conventional `http_proxy`, `https_proxy`, and
 `no_proxy` environment variables (with uppercase aliases also accepted).
 `no_proxy` accepts comma-separated hosts or domain suffixes, optional ports,
