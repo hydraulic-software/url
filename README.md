@@ -5,6 +5,9 @@ member path to a supported archive can resolve directly into the safely
 extracted archive. The `https://` scheme may be omitted, so `url example.com`
 is equivalent to `url https://example.com`.
 
+Archives may be nested, for example
+`url example.com/outer.zip/dir/inner.zip/file.txt`.
+
 Multiple URLs may be supplied as arguments or as lines on standard input.
 Blank lines and lines whose first non-whitespace character is `#` are ignored.
 Each resulting path is newline-terminated by default; use `--print0` for NUL

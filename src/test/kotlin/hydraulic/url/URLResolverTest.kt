@@ -148,6 +148,30 @@ class URLResolverTest {
     }
 
     @Test
+    fun `nested archive members resolve recursively`() = withServer { server ->
+        val requests = mutableListOf<String>()
+        val innerZip = zipOf("inner/file.txt" to "nested member")
+        val outerZip = zipOfBytes("outer/dir/inner.zip" to innerZip)
+        server.createContext("/") { exchange ->
+            requests += exchange.requestURI.path
+            if (exchange.requestURI.path == "/outer.zip")
+                exchange.respond(outerZip)
+            else
+                exchange.respond404()
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache).resolve(server.uri("/outer.zip/dir/inner.zip/file.txt")).use { resolved ->
+                assertEquals("nested member", resolved.path.readText())
+            }
+        }
+        assertEquals(
+            listOf("/outer.zip/dir/inner.zip/file.txt", "/outer.zip/dir/inner.zip", "/outer.zip"),
+            requests
+        )
+    }
+
+    @Test
     fun `SHA-256 fragment locks the final resolved file`() = withServer { server ->
         val contents = "locked contents".toByteArray()
         val requestTargets = mutableListOf<String>()
@@ -267,11 +291,14 @@ class URLResolverTest {
         fun uri(path: String) = URI("http://127.0.0.1:${server.address.port}$path")
     }
 
-    private fun zipOf(vararg files: Pair<String, String>): ByteArray = ByteArrayOutputStream().use { bytes ->
+    private fun zipOf(vararg files: Pair<String, String>): ByteArray =
+        zipOfBytes(*files.map { (name, contents) -> name to contents.toByteArray() }.toTypedArray())
+
+    private fun zipOfBytes(vararg files: Pair<String, ByteArray>): ByteArray = ByteArrayOutputStream().use { bytes ->
         ZipOutputStream(bytes).use { zip ->
             for ((name, contents) in files) {
                 zip.putNextEntry(ZipEntry(name))
-                zip.write(contents.toByteArray())
+                zip.write(contents)
                 zip.closeEntry()
             }
         }

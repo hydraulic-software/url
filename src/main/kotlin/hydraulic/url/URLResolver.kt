@@ -37,8 +37,9 @@ class URLResolver(private val cache: DiskCache, private val resources: HttpResou
 
     private fun resolveWithoutHashLock(uri: URI, cacheIdentity: URI): ResolvedURL {
         val archive = parseArchiveURL(uri)
+        val identityArchive = parseArchiveURL(cacheIdentity)
         if (archive != null && archive.member.isEmpty() && uri.rawPath.endsWith('/'))
-            return resolveArchive(archive, cacheIdentity)
+            return resolveArchive(archive, identityArchive ?: invalidArchiveIdentity())
         try {
             return resources.resolve(uri, cacheIdentity).asSingleFile()
         } catch (e: HttpStatusException) {
@@ -46,15 +47,16 @@ class URLResolver(private val cache: DiskCache, private val resources: HttpResou
                 throw e
         }
 
-        return resolveArchive(archive ?: throw HttpStatusException(uri, 404), cacheIdentity)
+        return resolveArchive(
+            archive ?: throw HttpStatusException(uri, 404),
+            identityArchive ?: invalidArchiveIdentity()
+        )
     }
 
-    private fun resolveArchive(archive: ArchiveURL, cacheIdentity: URI): ResolvedURL {
-        val identityArchive = parseArchiveURL(cacheIdentity)
-            ?: throw IllegalArgumentException("Archive member URLs require a matching archive-shaped --cache-key-url")
-        val downloaded = resources.resolve(archive.archiveURI, identityArchive.archiveURI)
+    private fun resolveArchive(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
+        val downloaded = resolveArchiveSource(archive, identityArchive)
         try {
-            val archiveFile = downloaded.directory.listDirectoryEntries().single()
+            val archiveFile = downloaded.path
             val key = extractedArchiveCacheKey(archiveFile)
             val extracted = cache.get(key) { destination ->
                 // A version directory is packaging detail, not part of the URL's logical archive root.
@@ -78,6 +80,21 @@ class URLResolver(private val cache: DiskCache, private val resources: HttpResou
             downloaded.close()
         }
     }
+
+    private fun resolveArchiveSource(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
+        try {
+            return resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
+        } catch (e: HttpStatusException) {
+            if (e.statusCode != 404)
+                throw e
+            val outerArchive = parseArchiveURL(archive.archiveURI, 1) ?: throw e
+            val identityOuterArchive = parseArchiveURL(identityArchive.archiveURI, 1) ?: invalidArchiveIdentity()
+            return resolveArchive(outerArchive, identityOuterArchive)
+        }
+    }
+
+    private fun invalidArchiveIdentity(): Nothing =
+        throw IllegalArgumentException("Archive member URLs require a matching archive-shaped --cache-key-url")
 
     private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(directory.listDirectoryEntries().single(), this)
 }
@@ -119,12 +136,13 @@ class ResolvedURL(val path: Path, private val entry: DiskCache.OpenedEntry) : Au
 
 internal data class ArchiveURL(val archiveURI: URI, val member: List<String>)
 
-internal fun parseArchiveURL(uri: URI): ArchiveURL? {
+internal fun parseArchiveURL(uri: URI, depth: Int = 0): ArchiveURL? {
     val rawComponents = uri.rawPath.split('/')
     val components = rawComponents.map(::decodePathComponent)
-    val archiveIndex = components.indexOfLast { component -> ARCHIVE_SUFFIXES.any { component.endsWith(it, ignoreCase = true) } }
-    if (archiveIndex < 0)
-        return null
+    val archiveIndices = components.indices.filter { index ->
+        ARCHIVE_SUFFIXES.any { components[index].endsWith(it, ignoreCase = true) }
+    }
+    val archiveIndex = archiveIndices.getOrNull(archiveIndices.lastIndex - depth) ?: return null
     val member = components.drop(archiveIndex + 1).filter { it.isNotEmpty() }
     require(member.none { it == "." || it == ".." || '/' in it || '\\' in it }) {
         "Archive URL contains an unsafe member path component"
