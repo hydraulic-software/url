@@ -52,10 +52,11 @@ jobs:
           curl --fail --silent http://127.0.0.1:18080/archive.tar.gz >/dev/null
           extracted="$(./build/native/nativeCompile/url http://127.0.0.1:18080/archive.tar.gz/)"
           test "$(cat "$extracted/file.txt")" = payload
-          ./build/native/nativeCompile/url --progress=ansi --cache-dir "$fixture/ansi-cache" \
+          ./build/native/nativeCompile/url --progress=osc --cache-dir "$fixture/osc-cache" \
             http://127.0.0.1:18080/archive.tar.gz/ > "$fixture/path" 2> "$fixture/progress"
           test "$(cat "$(cat "$fixture/path")/file.txt")" = payload
-          test "$(LC_ALL=C tr -cd '\033' < "$fixture/progress" | wc -c)" -gt 0
+          grep -F $'\033]9;4;1;' "$fixture/progress"
+          grep -F $'\033]9;4;0;0\a' "$fixture/progress"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

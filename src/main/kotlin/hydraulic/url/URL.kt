@@ -3,13 +3,9 @@ package hydraulic.url
 import dev.progress4j.api.ProgressReport
 import dev.progress4j.terminal.TerminalProgressTracker
 import dev.progress4j.utils.ProgressJSONWriter
+import dev.progress4j.utils.OscProgressBarTracker
 import dev.progress4j.utils.ProgressPacer
 import dev.progress4j.utils.ProgressPrinter
-import com.github.ajalt.mordant.rendering.AnsiLevel
-import com.github.ajalt.mordant.terminal.PrintRequest
-import com.github.ajalt.mordant.terminal.StandardTerminalInterface
-import com.github.ajalt.mordant.terminal.Terminal
-import com.github.ajalt.mordant.terminal.TerminalInfo
 import hydraulic.diskcache.LocalDiskCache
 import hydraulic.utils.os.OperatingSystemPaths
 import picocli.CommandLine
@@ -51,7 +47,7 @@ class URL : Callable<Int> {
         names = ["--progress"],
         paramLabel = "MODE",
         defaultValue = "auto",
-        description = ["Progress on stderr: auto, ansi, never, plain, or json (default: ${'$'}{DEFAULT-VALUE})."]
+        description = ["Progress on stderr: auto, osc, never, plain, or json (default: ${'$'}{DEFAULT-VALUE})."]
     )
     lateinit var progress: String
 
@@ -99,37 +95,13 @@ internal fun progressTracker(
     "never" -> null
     "plain" -> ProgressPacer(ProgressPrinter(stderr), 4.0f)
     "json" -> ProgressPacer(ProgressJSONWriter(stderr.writer()), 30.0f)
-    "ansi" -> forcedAnsiProgressTracker(stderr, "NO_COLOR" !in environment)
+    "osc" -> OscProgressBarTracker(stderr::print)
     "auto" -> if (environment["TERM"] != "dumb" && stderrInteractive()) {
         TerminalProgressTracker.forOutput(stderr, "NO_COLOR" !in environment)
     } else {
         null
     }
-    else -> throw IllegalArgumentException("--progress must be one of: auto, ansi, never, plain, json")
-}
-
-/** A deterministic ANSI terminal that deliberately skips environment and TTY detection. */
-private fun forcedAnsiProgressTracker(stderr: PrintStream, colors: Boolean): TerminalProgressTracker {
-    val terminalInterface = object : StandardTerminalInterface() {
-        override fun info(
-            ansiLevel: AnsiLevel?,
-            hyperlinks: Boolean?,
-            outputInteractive: Boolean?,
-            inputInteractive: Boolean?
-        ) = TerminalInfo(ansiLevel ?: AnsiLevel.NONE, hyperlinks ?: false, true, false, true)
-
-        override fun completePrintRequest(request: PrintRequest) {
-            if (request.trailingLinebreak) stderr.println(request.text) else stderr.print(request.text)
-        }
-    }
-    return TerminalProgressTracker(
-        Terminal(
-            ansiLevel = if (colors) AnsiLevel.TRUECOLOR else AnsiLevel.NONE,
-            width = 80,
-            height = 24,
-            terminalInterface = terminalInterface
-        )
-    )
+    else -> throw IllegalArgumentException("--progress must be one of: auto, osc, never, plain, json")
 }
 
 internal fun isStderrInteractive(): Boolean {

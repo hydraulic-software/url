@@ -29,9 +29,11 @@ progress, `--progress=plain` for line-oriented human output, or
 `--progress=json` for Progress4J JSON Lines. Automatic mode is quiet when
 stderr is redirected or `TERM=dumb`, and honors `NO_COLOR`.
 
-Use `--progress=ansi` to force the animated escape stream even when stderr is
-redirected, for example `url --progress=ansi example.com/file 2>progress.log`.
-This is useful for terminal coordinators and testing progress rendering.
+Use `--progress=osc` to emit only terminal-native OSC 9;4 progress codes on
+stderr, even when it is redirected, for example
+`url --progress=osc example.com/file 2>progress.osc`. Supporting terminal
+emulators can use these codes to show progress in a tab, taskbar, or other
+native UI without a hand-drawn terminal animation.
 
 This is a standalone Gradle project that can also be included as a module in
 the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,
