@@ -60,6 +60,12 @@ Direct HTTP requests must send `User-Agent: Hydraulic URL/1.0`. The command
 must honor conventional `http_proxy`, `https_proxy`, and `no_proxy` environment
 variables, with uppercase aliases accepted.
 
+On systems with POSIX file permissions, a final regular file beginning with a
+hashbang (`#!`) or an ELF, Mach-O, or fat Mach-O magic value must gain the
+owner, group, and other execute bits. All existing permission bits must be
+preserved. Other content and non-regular-file results must not gain execute
+permission from this rule.
+
 ### Archive members
 
 If requesting an input returns 404 and its path contains a supported archive

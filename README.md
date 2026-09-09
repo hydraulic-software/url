@@ -18,6 +18,9 @@ Append `#sha256=<64 hex characters>` to require that the final resolved file
 has the given SHA-256 digest. The fragment is not sent to the server and works
 for both ordinary downloads and individual files selected from archives.
 
+On Unix-like systems, resolved hashbang scripts and ELF, Mach-O, or fat Mach-O
+binaries automatically gain execute permission.
+
 HTTP requests honor the conventional `http_proxy`, `https_proxy`, and
 `no_proxy` environment variables (with uppercase aliases also accepted).
 `no_proxy` accepts comma-separated hosts or domain suffixes, optional ports,

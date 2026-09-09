@@ -19,6 +19,8 @@ import java.net.InetSocketAddress
 import java.net.URI
 import java.nio.file.Path
 import java.nio.file.Files
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -162,6 +164,83 @@ class URLResolverTest {
         }
 
         assertEquals(USER_AGENT, userAgent)
+    }
+
+    @Test
+    fun `recognized executable content gains execute bits without losing permissions`() {
+        if (Files.getFileAttributeView(tempDir, PosixFileAttributeView::class.java) == null)
+            return
+        val prefixes = listOf(
+            byteArrayOf(0x23, 0x21),
+            bytes(0x7f454c46),
+            bytes(0xfeedface.toInt()), bytes(0xcefaedfe.toInt()),
+            bytes(0xfeedfacf.toInt()), bytes(0xcffaedfe.toInt()),
+            bytes(0xcafebabe.toInt()) + bytes(2),
+            bytes(0xbebafeca.toInt()) + bytes(Integer.reverseBytes(2)),
+            bytes(0xcafebabf.toInt()) + bytes(2),
+            bytes(0xbfbafeca.toInt()) + bytes(Integer.reverseBytes(2))
+        )
+        val initial = setOf(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.GROUP_READ
+        )
+        val expected = initial + setOf(
+            PosixFilePermission.OWNER_EXECUTE,
+            PosixFilePermission.GROUP_EXECUTE,
+            PosixFilePermission.OTHERS_EXECUTE
+        )
+
+        prefixes.forEachIndexed { index, prefix ->
+            val file = tempDir / "executable-$index"
+            file.writeBytes(prefix + " payload".toByteArray())
+            Files.setPosixFilePermissions(file, initial)
+
+            file.makeExecutableIfRecognized()
+
+            assertEquals(expected, Files.getPosixFilePermissions(file))
+        }
+    }
+
+    @Test
+    fun `ordinary data does not gain execute permissions`() {
+        if (Files.getFileAttributeView(tempDir, PosixFileAttributeView::class.java) == null)
+            return
+        val file = tempDir / "data.txt"
+        file.writeBytes("ordinary data".toByteArray())
+        val initial = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+        Files.setPosixFilePermissions(file, initial)
+
+        file.makeExecutableIfRecognized()
+
+        assertEquals(initial, Files.getPosixFilePermissions(file))
+    }
+
+    @Test
+    fun `Java class magic is not mistaken for fat Mach-O`() {
+        if (Files.getFileAttributeView(tempDir, PosixFileAttributeView::class.java) == null)
+            return
+        val file = tempDir / "Example.class"
+        file.writeBytes(bytes(0xcafebabe.toInt()) + byteArrayOf(0, 0, 0, 65))
+        val initial = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+        Files.setPosixFilePermissions(file, initial)
+
+        file.makeExecutableIfRecognized()
+
+        assertEquals(initial, Files.getPosixFilePermissions(file))
+    }
+
+    @Test
+    fun `resolved hashbang script is executable on POSIX systems`() = withServer { server ->
+        if (Files.getFileAttributeView(tempDir, PosixFileAttributeView::class.java) == null)
+            return@withServer
+        server.createContext("/") { it.respond("#!/bin/sh\necho hello\n".toByteArray()) }
+
+        makeCache().use { cache ->
+            URLResolver(cache).resolve(server.uri("/script")).use { resolved ->
+                assertTrue(Files.isExecutable(resolved.path))
+            }
+        }
     }
 
     @Test
@@ -394,4 +473,11 @@ class URLResolverTest {
         file.writeBytes(this)
         return file.sha256()
     }
+
+    private fun bytes(value: Int): ByteArray = byteArrayOf(
+        (value ushr 24).toByte(),
+        (value ushr 16).toByte(),
+        (value ushr 8).toByte(),
+        value.toByte()
+    )
 }
