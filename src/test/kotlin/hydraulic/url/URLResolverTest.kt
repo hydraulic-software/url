@@ -35,6 +35,7 @@ import kotlin.io.path.isDirectory
 import kotlin.io.path.isSymbolicLink
 import kotlin.io.path.readText
 import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -390,6 +391,49 @@ class URLResolverTest {
         assertEquals(2, commandLine().execute("--does-not-exist"))
         assertEquals(1, commandLine().execute("--print0", "--print-separator=:"))
         assertEquals(0, commandLine().execute("--help"))
+    }
+
+    @Test
+    fun `zsh setup is bounded idempotent and preserves user configuration`() {
+        val zshrc = tempDir / ".zshrc"
+        zshrc.writeText("export USER_SETTING=kept\n")
+
+        assertTrue(installZshIntegration(zshrc))
+        val installed = zshrc.readText()
+        assertContains(installed, "export USER_SETTING=kept")
+        assertEquals(1, installed.split(ZSH_SETUP_BEGIN).size - 1)
+        assertFalse(installZshIntegration(zshrc))
+        assertEquals(installed, zshrc.readText())
+    }
+
+    @Test
+    fun `installed zsh integration resolves and executes URL commands`() {
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+            return
+        val zshrc = tempDir / ".zshrc"
+        installZshIntegration(zshrc)
+        val bin = (tempDir / "bin").createDirectories()
+        val resolvedTool = bin / "resolved-tool"
+        resolvedTool.writeText("#!/bin/sh\nprintf 'executed:%s:%s\\n' \"${'$'}1\" \"${'$'}2\"\n")
+        resolvedTool.toFile().setExecutable(true)
+        val fakeURL = bin / "url"
+        fakeURL.writeText("#!/bin/sh\nshift 3\nexec '${resolvedTool}' \"${'$'}@\"\n")
+        fakeURL.toFile().setExecutable(true)
+        val command = """
+            source ${(zshrc.toString())}
+            function zle() { :; }
+            BUFFER='https://example.test/tool alpha beta'
+            _hydraulic_url_accept_line
+            eval "${'$'}BUFFER"
+        """.trimIndent()
+        val process = ProcessBuilder("zsh", "-dfc", command)
+            .redirectErrorStream(true)
+            .apply { environment()["PATH"] = "${bin}:${System.getenv("PATH")}" }
+            .start()
+        val output = process.inputStream.bufferedReader().readText()
+
+        assertEquals(0, process.waitFor(), output)
+        assertContains(output, "executed:alpha:beta")
     }
 
     @Test

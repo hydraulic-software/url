@@ -40,6 +40,12 @@ stderr, even when it is redirected, for example
 emulators can use these codes to show progress in a tab, taskbar, or other
 native UI without a hand-drawn terminal animation.
 
+Run `url --setup` to add a bounded, idempotent block to `.zshrc`. Afterwards,
+an HTTP(S) URL can be used directly in command position; `url` resolves the
+file and passes the remaining arguments to it. The integration preserves and
+delegates to the existing zsh `accept-line` widget. Remove the section
+between the `Hydraulic URL integration` markers to uninstall it.
+
 This is a standalone Gradle project that can also be included as a module in
 the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,
 tests, and GitHub Actions workflow are self-contained. The JARs in `libs/` are
