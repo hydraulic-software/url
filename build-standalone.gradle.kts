@@ -47,5 +47,6 @@ graalvmNative {
             languageVersion.set(JavaLanguageVersion.of(25))
             vendor.set(JvmVendorSpec.matching("GraalVM Community"))
         })
+        jvmArgs(application.applicationDefaultJvmArgs)
     }
 }
