@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.io.PrintWriter
+import java.io.StringReader
 import java.io.StringWriter
 import java.net.InetSocketAddress
 import java.net.URI
@@ -46,6 +47,19 @@ class URLResolverTest {
         assertEquals(URI("http://example.com/path"), parseURL("http://example.com/path"))
         assertEquals(URI("file:///tmp/local"), parseURL("file:///tmp/local"))
         assertEquals(URI("https://example.com/?next=http://other.example"), parseURL("example.com/?next=http://other.example"))
+    }
+
+    @Test
+    fun `stdin URL lists ignore comments and blank lines`() {
+        val input = StringReader("""
+            # Download inputs
+              example.com/one
+
+            https://example.com/two
+              # another comment
+        """.trimIndent()).buffered()
+
+        assertEquals(listOf("example.com/one", "https://example.com/two"), readURLsFromStdin(input))
     }
 
     @Test

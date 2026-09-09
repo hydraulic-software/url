@@ -14,8 +14,12 @@ import java.util.concurrent.Callable
 /** Resolves an HTTP(S) URL to a local path, downloading and revalidating it through a shared disk cache. */
 @Command(name = "url", description = ["Print the cached local path of an HTTP(S) resource."], mixinStandardHelpOptions = true)
 class URL : Callable<Int> {
-    @Parameters(index = "0", paramLabel = "URL", description = ["The HTTP(S) URL to resolve; https:// is optional."])
-    lateinit var url: String
+    @Parameters(
+        index = "0..*",
+        paramLabel = "URL",
+        description = ["HTTP(S) URLs to resolve; https:// is optional. Reads a commented list from stdin when omitted."]
+    )
+    var urls: List<String> = emptyList()
 
     @Option(names = ["--cache-dir"], description = ["Shared cache directory."])
     var cacheDirectory: Path = OperatingSystemPaths.current(null, "url-tool").localCache.parent
@@ -29,18 +33,33 @@ class URL : Callable<Int> {
     @Option(names = ["--print0"], description = ["Terminate the returned path with a NUL byte instead of a newline."])
     var print0: Boolean = false
 
+    @Option(names = ["--print-separator"], paramLabel = "CHAR", description = ["Terminate each returned path with this character."])
+    var printSeparator: String? = null
+
     @Mixin
     lateinit var cacheConfiguration: LocalDiskCache.Configuration
 
     override fun call(): Int {
+        require(printSeparator == null || printSeparator!!.length == 1) { "--print-separator requires exactly one character" }
+        require(!print0 || printSeparator == null) { "--print0 and --print-separator cannot be used together" }
+        val inputs = urls.ifEmpty { readURLsFromStdin() }
+        require(inputs.isNotEmpty()) { "No URLs were supplied as arguments or on stdin" }
+        require(cacheKeyURL == null || inputs.size == 1) { "--cache-key-url requires exactly one input URL" }
+        val separator = when {
+            print0 -> '\u0000'
+            printSeparator != null -> printSeparator!![0]
+            else -> '\n'
+        }
         cacheConfiguration.directoryLockFileName = "LOCK"
         LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
-            val uri = parseURL(url)
-            URLResolver(cache).resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri).use { resolved ->
-                // Keep stdout machine-readable: diagnostics and progress must
-                // use stderr, because callers commonly embed this command in command substitution.
-                print(resolved.path.toAbsolutePath())
-                print(if (print0) '\u0000' else '\n')
+            for (input in inputs) {
+                val uri = parseURL(input)
+                URLResolver(cache).resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri).use { resolved ->
+                    // Keep stdout machine-readable: diagnostics and progress must
+                    // use stderr, because callers commonly embed this command in command substitution.
+                    print(resolved.path.toAbsolutePath())
+                    print(separator)
+                }
             }
         }
         return 0
@@ -50,6 +69,12 @@ class URL : Callable<Int> {
 internal fun parseURL(url: String): URI = URI(if (URL_SCHEME.matchesAt(url, 0)) url else "https://$url")
 
 private val URL_SCHEME = Regex("[A-Za-z][A-Za-z0-9+.-]*://")
+
+internal fun readURLsFromStdin(reader: java.io.BufferedReader = System.`in`.bufferedReader()): List<String> =
+    generateSequence(reader::readLine)
+        .map(String::trim)
+        .filter { it.isNotEmpty() && !it.startsWith('#') }
+        .toList()
 
 fun main(args: Array<String>) {
     val exitCode = commandLine().execute(*args)
