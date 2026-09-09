@@ -14,8 +14,8 @@ import java.util.concurrent.Callable
 /** Resolves an HTTP(S) URL to a local path, downloading and revalidating it through a shared disk cache. */
 @Command(name = "url", description = ["Print the cached local path of an HTTP(S) resource."], mixinStandardHelpOptions = true)
 class URL : Callable<Int> {
-    @Parameters(index = "0", paramLabel = "URL", description = ["The HTTP(S) URL to resolve."])
-    lateinit var uri: URI
+    @Parameters(index = "0", paramLabel = "URL", description = ["The HTTP(S) URL to resolve; https:// is optional."])
+    lateinit var url: String
 
     @Option(names = ["--cache-dir"], description = ["Shared cache directory."])
     var cacheDirectory: Path = OperatingSystemPaths.current(null, "url-tool").localCache.parent
@@ -24,7 +24,7 @@ class URL : Callable<Int> {
         names = ["--cache-key-url"],
         description = ["Use this URL as the cache identity while requesting URL exactly as supplied."]
     )
-    var cacheKeyURI: URI? = null
+    var cacheKeyURL: String? = null
 
     @Option(names = ["--print0"], description = ["Terminate the returned path with a NUL byte instead of a newline."])
     var print0: Boolean = false
@@ -35,7 +35,8 @@ class URL : Callable<Int> {
     override fun call(): Int {
         cacheConfiguration.directoryLockFileName = "LOCK"
         LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
-            URLResolver(cache).resolve(uri, cacheKeyURI ?: uri).use { resolved ->
+            val uri = parseURL(url)
+            URLResolver(cache).resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri).use { resolved ->
                 // Keep stdout machine-readable: diagnostics and progress must
                 // use stderr, because callers commonly embed this command in command substitution.
                 print(resolved.path.toAbsolutePath())
@@ -45,6 +46,10 @@ class URL : Callable<Int> {
         return 0
     }
 }
+
+internal fun parseURL(url: String): URI = URI(if (URL_SCHEME.matchesAt(url, 0)) url else "https://$url")
+
+private val URL_SCHEME = Regex("[A-Za-z][A-Za-z0-9+.-]*://")
 
 fun main(args: Array<String>) {
     val exitCode = commandLine().execute(*args)

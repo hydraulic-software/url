@@ -41,6 +41,14 @@ class URLResolverTest {
     }
 
     @Test
+    fun `missing URL scheme infers HTTPS`() {
+        assertEquals(URI("https://example.com:8443/path?q=1"), parseURL("example.com:8443/path?q=1"))
+        assertEquals(URI("http://example.com/path"), parseURL("http://example.com/path"))
+        assertEquals(URI("file:///tmp/local"), parseURL("file:///tmp/local"))
+        assertEquals(URI("https://example.com/?next=http://other.example"), parseURL("example.com/?next=http://other.example"))
+    }
+
+    @Test
     fun `archive URL parsing prefers compound suffixes`() {
         val parsed = parseArchiveURL(URI("https://example.com/releases/tool.tar.gz/bin/tool"))!!
         assertEquals(URI("https://example.com/releases/tool.tar.gz"), parsed.archiveURI)
