@@ -285,14 +285,12 @@ class URLResolverTest {
     }
 
     @Test
-    fun `ANSI mode can be captured without a terminal`() {
+    fun `OSC mode emits terminal-native progress without a terminal`() {
         val bytes = ByteArrayOutputStream()
-        val tracker = progressTracker("ansi", PrintStream(bytes), emptyMap()) { false }!!
+        val tracker = progressTracker("osc", PrintStream(bytes), emptyMap()) { false }!!
         tracker.report(dev.progress4j.api.ProgressReport.create("Downloading", 100, 1, dev.progress4j.api.ProgressReport.Units.BYTES))
-        Thread.sleep(75)
-        (tracker as AutoCloseable).close()
 
-        assertTrue(bytes.toString().contains('\u001B'))
+        assertEquals("\u001B]9;4;1;1\u0007", bytes.toString())
     }
 
     @Test
@@ -303,7 +301,7 @@ class URLResolverTest {
         )
 
         assertEquals(1, exitCode)
-        assertEquals("url: --progress must be one of: auto, ansi, never, plain, json\n", stderr.toString())
+        assertEquals("url: --progress must be one of: auto, osc, never, plain, json\n", stderr.toString())
     }
 
     @Test
