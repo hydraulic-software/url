@@ -29,7 +29,7 @@ class URL : Callable<Int> {
     var urls: List<String> = emptyList()
 
     @Option(names = ["--cache-dir"], description = ["Shared cache directory."])
-    var cacheDirectory: Path = OperatingSystemPaths.current(null, "url-tool").localCache.parent
+    var cacheDirectory: Path = OperatingSystemPaths.current("dev.hydraulic", "url-tool").localCache
 
     @Option(
         names = ["--cache-key-url"],
