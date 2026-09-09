@@ -1,0 +1,40 @@
+name: Native binaries
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            artifact: url-linux-amd64
+          - runner: ubuntu-24.04-arm
+            artifact: url-linux-arm64
+          - runner: macos-15-intel
+            artifact: url-macos-amd64
+          - runner: macos-15
+            artifact: url-macos-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: gradle
+      - name: Test and compile native binary
+        run: ./gradlew test nativeCompile --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/native/nativeCompile/url
+          if-no-files-found: error
