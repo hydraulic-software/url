@@ -50,12 +50,6 @@ class URL : Callable<Int> {
     @Option(names = ["--no-gatekeeper"], description = ["Do not attach macOS Gatekeeper quarantine metadata to Mach-O results."])
     var noGatekeeper: Boolean = false
 
-    @Option(names = ["--setup"], description = ["Install idempotent zsh URL-as-command integration."])
-    var setup: Boolean = false
-
-    @Option(names = ["--execute"], paramLabel = "URL", description = ["Resolve URL and execute it with the remaining operands."], hidden = true)
-    var executeURL: String? = null
-
     @Option(
         names = ["--progress"],
         paramLabel = "MODE",
@@ -68,16 +62,9 @@ class URL : Callable<Int> {
     lateinit var cacheConfiguration: LocalDiskCache.Configuration
 
     override fun call(): Int {
-        if (setup) {
-            require(urls.isEmpty()) { "--setup does not accept URL operands" }
-            val zshDirectory = System.getenv("ZDOTDIR")?.let(Path::of) ?: Path.of(System.getProperty("user.home"))
-            val changed = installZshIntegration(zshDirectory.resolve(".zshrc"))
-            System.err.println(if (changed) "Installed Hydraulic URL integration in ${zshDirectory.resolve(".zshrc")}" else "Hydraulic URL integration is already installed")
-            return 0
-        }
         require(printSeparator == null || printSeparator!!.length == 1) { "--print-separator requires exactly one character" }
         require(!print0 || printSeparator == null) { "--print0 and --print-separator cannot be used together" }
-        val inputs = executeURL?.let(::listOf) ?: urls.ifEmpty { readURLsFromStdin() }
+        val inputs = urls.ifEmpty { readURLsFromStdin() }
         require(inputs.isNotEmpty()) { "No URLs were supplied as arguments or on stdin" }
         require(cacheKeyURL == null || inputs.size == 1) { "--cache-key-url requires exactly one input URL" }
         val progressTracker = progressTracker(progress, System.err, System.getenv(), ::isStderrInteractive)
@@ -92,8 +79,6 @@ class URL : Callable<Int> {
                 for (input in inputs) {
                     val uri = parseURL(input)
                     URLResolver(cache, progressTracker, gatekeeper = !noGatekeeper).resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri).use { resolved ->
-                        if (executeURL != null)
-                            return ProcessBuilder(listOf(resolved.path.toAbsolutePath().toString()) + urls).inheritIO().start().waitFor()
                         // Keep stdout machine-readable: diagnostics and progress must
                         // use stderr, because callers commonly embed this command in command substitution.
                         print(resolved.path.toAbsolutePath())
@@ -158,12 +143,22 @@ internal fun readURLsFromStdin(reader: java.io.BufferedReader = System.`in`.buff
         .toList()
 
 fun main(args: Array<String>) {
-    val exitCode = commandLine().execute(*args)
+    val exitCode = commandLine(processInvocationName()).execute(*args)
     if (exitCode != 0)
         kotlin.system.exitProcess(exitCode)
 }
 
-internal fun commandLine(): CommandLine = CommandLine(URL()).setExecutionExceptionHandler { exception, commandLine, _ ->
-    commandLine.err.println("url: ${exception.message ?: exception.javaClass.simpleName}")
-    commandLine.commandSpec.exitCodeOnExecutionException()
+internal fun commandLine(invocationName: String = "url"): CommandLine {
+    val normalizedName = invocationName.substringBeforeLast('.').lowercase()
+    val runner = normalizedName == "run"
+    return CommandLine(if (runner) Run() else URL())
+        .apply { if (runner) isStopAtPositional = true }
+        .setExecutionExceptionHandler { exception, commandLine, _ ->
+            commandLine.err.println("${commandLine.commandName}: ${exception.message ?: exception.javaClass.simpleName}")
+            commandLine.commandSpec.exitCodeOnExecutionException()
+        }
 }
+
+internal fun processInvocationName(): String = ProcessHandle.current().info().command()
+    .map { Path.of(it).fileName.toString() }
+    .orElse("url")

@@ -31,10 +31,12 @@ jobs:
           distribution: graalvm-community
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: gradle
-      - name: Test and compile native binary
-        run: ./gradlew test nativeCompile --no-daemon
+      - name: Test and compile native binaries
+        run: ./gradlew test nativePair --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: build/native/nativeCompile/url
+          path: |
+            build/native/nativeCompile/url
+            build/native/nativeCompile/run
           if-no-files-found: error

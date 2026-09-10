@@ -72,12 +72,12 @@ preserved. Other content and non-regular-file results must not gain execute
 permission from this rule.
 
 A hashbang text file may override the origin's HTTP cache policy with a second
-line of the form `# Cache-Control: DIRECTIVES` (case-insensitive field name).
-The directive must be non-empty printable ASCII and has the semantics of an
-HTTP `Cache-Control` field value. It replaces the origin cache-control value
-for freshness decisions and must remain effective across `304 Not Modified`
-revalidation. The comment has no effect unless it immediately follows the
-initial hashbang line.
+line of the form `# Cache-Control: DIRECTIVES` or `// Cache-Control:
+DIRECTIVES` (case-insensitive field name). The directive must be non-empty
+printable ASCII and has the semantics of an HTTP `Cache-Control` field value.
+It replaces the origin cache-control value for freshness decisions and must
+remain effective across `304 Not Modified` revalidation. The comment has no
+effect unless it immediately follows the initial hashbang line.
 
 ### Archive members
 
@@ -97,6 +97,23 @@ An input may append `#sha256=<64 hexadecimal characters>`. The fragment must
 not be sent in the HTTP request. The command must hash the final file, including
 an archive member, and fail without printing that result on mismatch. Locking
 a directory must fail. Other URI fragments have no locking meaning.
+
+## Companion `run` command
+
+The same executable may be exposed under the name `run`. It must select runner
+behavior from its invoked file name, resolve its first operand, and execute the
+result with every remaining operand passed unchanged as a separate argument.
+Options after the URL belong to the resolved program, not to `run`.
+
+An HTTP(S) URL with no path component or with a path ending in `/` identifies
+a tool directory. Before resolution, `run` must append `run.zip/run.sh` on
+Unix-like systems or `run.zip/run.ps1` on Windows. Other URL paths are resolved
+directly. A PowerShell startup script must be invoked through PowerShell on
+Windows.
+
+`run --install` must ensure that sibling `run` and `url` command names refer to
+hard links of the same executable and install the optional shell integration.
+Shell integration may be platform-specific and is otherwise non-contractual.
 
 ## Output, diagnostics, and failure
 

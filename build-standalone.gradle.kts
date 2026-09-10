@@ -1,3 +1,5 @@
+import java.nio.file.Files
+
 plugins {
     kotlin("jvm") version "2.4.10"
     kotlin("kapt") version "2.4.10"
@@ -48,5 +50,17 @@ graalvmNative {
             vendor.set(JvmVendorSpec.matching("GraalVM Community"))
         })
         jvmArgs(application.applicationDefaultJvmArgs)
+    }
+}
+
+tasks.register("nativePair") {
+    dependsOn("nativeCompile")
+    val nativeDirectory = layout.buildDirectory.dir("native/nativeCompile")
+    outputs.files(nativeDirectory.map { it.file("url") }, nativeDirectory.map { it.file("run") })
+    doLast {
+        val url = nativeDirectory.get().file("url").asFile.toPath()
+        val run = nativeDirectory.get().file("run").asFile.toPath()
+        Files.deleteIfExists(run)
+        Files.createLink(run, url)
     }
 }

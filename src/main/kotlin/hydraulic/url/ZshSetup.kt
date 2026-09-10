@@ -11,13 +11,13 @@ internal const val ZSH_SETUP_END = "# <<< Hydraulic URL integration <<<"
 
 internal val ZSH_SETUP_BLOCK = """
     $ZSH_SETUP_BEGIN
-    # Rewrite an HTTP(S) command line before zsh treats its slashes as a local path.
+    # Prefix an HTTP(S) command line before zsh treats its slashes as a local path.
     function _hydraulic_url_accept_line() {
       if [[ ${'$'}BUFFER =~ '^([[:space:]]*)(https?://[^[:space:]]+)' ]]; then
         local leading=${'$'}match[1]
         local command_name=${'$'}match[2]
         local rest=${'$'}{BUFFER:${'$'}{#MATCH}}
-        BUFFER="${'$'}{leading}url --execute ${'$'}{(q)command_name} --${'$'}rest"
+        BUFFER="${'$'}{leading}run ${'$'}{(q)command_name}${'$'}rest"
       fi
       zle _hydraulic_url_previous_accept_line
     }

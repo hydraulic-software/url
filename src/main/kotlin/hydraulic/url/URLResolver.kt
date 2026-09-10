@@ -244,7 +244,7 @@ private val FAT_LITTLE_ENDIAN_MAGICS = setOf(0xbebafecau, 0xbfbafecau)
 private const val QUARANTINE_ATTRIBUTE = "com.apple.quarantine"
 private val IS_MAC_OS = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)
 private const val HTTP_CACHE_CONTROL_METADATA = "http.cache-control"
-private val CACHE_CONTROL_COMMENT = Regex("#\\s*Cache-Control:\\s*(.*)", RegexOption.IGNORE_CASE)
+private val CACHE_CONTROL_COMMENT = Regex("(?:#|//)\\s*Cache-Control:\\s*(.*)", RegexOption.IGNORE_CASE)
 private const val MAX_HASHBANG_HEADER_BYTES = 8192
 
 internal const val USER_AGENT = "Hydraulic URL/1.0"

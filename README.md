@@ -23,9 +23,10 @@ binaries automatically gain execute permission. On macOS, Mach-O results also
 receive Gatekeeper quarantine metadata; use `--no-gatekeeper` to opt out.
 
 A hashbang script may override unusable or incorrect origin cache headers by
-placing `# Cache-Control: DIRECTIVES` on the line immediately after its
-hashbang. For example, `# Cache-Control: max-age=3600` keeps the cached script
-fresh for one hour, while `# Cache-Control: no-cache` revalidates every time.
+placing `# Cache-Control: DIRECTIVES` or `// Cache-Control: DIRECTIVES` on the
+line immediately after its hashbang. For example, `# Cache-Control:
+max-age=3600` keeps the cached script fresh for one hour, while `#
+Cache-Control: no-cache` revalidates every time.
 
 HTTP requests honor the conventional `http_proxy`, `https_proxy`, and
 `no_proxy` environment variables (with uppercase aliases also accepted).
@@ -45,11 +46,18 @@ stderr, even when it is redirected, for example
 emulators can use these codes to show progress in a tab, taskbar, or other
 native UI without a hand-drawn terminal animation.
 
-Run `url --setup` to add a bounded, idempotent block to `.zshrc`. Afterwards,
-an HTTP(S) URL can be used directly in command position; `url` resolves the
-file and passes the remaining arguments to it. The integration preserves and
-delegates to the existing zsh `accept-line` widget. Remove the section
-between the `Hydraulic URL integration` markers to uninstall it.
+The same native image also acts as `run` when invoked through a hard link of
+that name. `run URL [ARG...]` resolves and executes a URL while preserving the
+remaining arguments. A URL with no path or a path ending in `/` names a tool
+directory: `run` appends `run.zip/run.sh` on Unix or `run.zip/run.ps1` on
+Windows and resolves the startup script from that archive.
+
+Run `run --install` to ensure a sibling `url` hard link exists and add a
+bounded, idempotent block to `.zshrc`. Afterwards, an explicit HTTP(S) URL can
+be used directly in command position; the zsh integration prefixes it with
+`run`. It preserves and delegates to the existing zsh `accept-line` widget.
+Remove the section between the `Hydraulic URL integration` markers to remove
+the shell integration.
 
 This is a standalone Gradle project that can also be included as a module in
 the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,

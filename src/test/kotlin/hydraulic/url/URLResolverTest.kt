@@ -10,6 +10,7 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import picocli.CommandLine
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.io.PrintWriter
@@ -309,6 +310,10 @@ class URLResolverTest {
         accepted.writeText("#!/usr/bin/env kotlin\n# cache-control: max-age=60\nprintln(1)\n")
         assertEquals("max-age=60", accepted.hashbangCachePolicy())
 
+        val slashComment = tempDir / "slash-comment"
+        slashComment.writeText("#!/usr/bin/env kotlin\n// Cache-Control: no-cache\nprintln(1)\n")
+        assertEquals("no-cache", slashComment.hashbangCachePolicy())
+
         val tooLate = tempDir / "too-late"
         tooLate.writeText("#!/bin/sh\n# description\n# Cache-Control: no-cache\n")
         assertEquals(null, tooLate.hashbangCachePolicy())
@@ -453,12 +458,9 @@ class URLResolverTest {
         val zshrc = tempDir / ".zshrc"
         installZshIntegration(zshrc)
         val bin = (tempDir / "bin").createDirectories()
-        val resolvedTool = bin / "resolved-tool"
-        resolvedTool.writeText("#!/bin/sh\nprintf 'executed:%s:%s\\n' \"${'$'}1\" \"${'$'}2\"\n")
-        resolvedTool.toFile().setExecutable(true)
-        val fakeURL = bin / "url"
-        fakeURL.writeText("#!/bin/sh\nshift 3\nexec '${resolvedTool}' \"${'$'}@\"\n")
-        fakeURL.toFile().setExecutable(true)
+        val fakeRun = bin / "run"
+        fakeRun.writeText("#!/bin/sh\nprintf 'executed:%s:%s:%s\\n' \"${'$'}1\" \"${'$'}2\" \"${'$'}3\"\n")
+        fakeRun.toFile().setExecutable(true)
         val command = """
             source ${(zshrc.toString())}
             function zle() { :; }
@@ -473,7 +475,54 @@ class URLResolverTest {
         val output = process.inputStream.bufferedReader().readText()
 
         assertEquals(0, process.waitFor(), output)
-        assertContains(output, "executed:alpha:beta")
+        assertContains(output, "executed:https://example.test/tool:alpha:beta")
+    }
+
+    @Test
+    fun `run directory convention preserves URL suffixes and selects platform script`() {
+        assertEquals(URI("https://example.com/run.zip/run.sh"), runTargetURI(URI("https://example.com"), false))
+        assertEquals(
+            URI("https://example.com/tools/run.zip/run.sh?channel=beta#sha256=abc"),
+            runTargetURI(URI("https://example.com/tools/?channel=beta#sha256=abc"), false)
+        )
+        assertEquals(URI("https://example.com/tools/run.zip/run.ps1"), runTargetURI(URI("https://example.com/tools/"), true))
+        assertEquals(URI("https://example.com/tool.sh"), runTargetURI(URI("https://example.com/tool.sh"), false))
+    }
+
+    @Test
+    fun `run installation creates an idempotent sibling hard link`() {
+        val run = tempDir / "run"
+        val url = tempDir / "url"
+        run.writeText("binary")
+
+        assertTrue(ensureHardLink(run, url))
+        assertTrue(Files.isSameFile(run, url))
+        assertFalse(ensureHardLink(run, url))
+
+        Files.delete(url)
+        url.writeText("binary")
+        assertTrue(ensureHardLink(run, url))
+        assertTrue(Files.isSameFile(run, url))
+    }
+
+    @Test
+    fun `run mode keeps options after URL as child arguments`() {
+        val parsed = Run(executablePath = { tempDir / "run" }, windows = false)
+        CommandLine(parsed).setStopAtPositional(true).parseArgs("https://example.com", "--help", "value")
+
+        assertEquals("https://example.com", parsed.url)
+        assertEquals(listOf("--help", "value"), parsed.arguments)
+    }
+
+    @Test
+    fun `resolved Unix script receives all arguments`() {
+        val output = tempDir / "arguments"
+        val script = tempDir / "tool.sh"
+        script.writeText("#!/bin/sh\nprintf '%s\\n' \"${'$'}@\" > '${output}'\n")
+        script.toFile().setExecutable(true)
+
+        assertEquals(0, runResolvedPath(script, listOf("--help", "two words"), false))
+        assertEquals("--help\ntwo words\n", output.readText())
     }
 
     @Test
