@@ -9,7 +9,9 @@ Examples and implementation notes are informative.
 
 ## Invocation and inputs
 
-The command is named `url` and accepts zero or more URL operands:
+The command is named `url` and accepts zero or more URL operands. An
+implementation may provide additional end-user options; they are outside this
+script-facing contract.
 
 ```text
 url [OPTIONS] [URL...]
@@ -21,14 +23,17 @@ line. It must trim surrounding whitespace and ignore blank lines and lines
 whose first non-whitespace character is `#`. It must fail when no URLs remain.
 
 An input without a URI scheme must be interpreted as HTTPS. For example,
-`example.com/file` is equivalent to `https://example.com/file`. Resolvable
-inputs must use HTTP or HTTPS.
+`example.com/file` is equivalent to `https://example.com/file`.
 
-## Stable options
+A conforming implementation must support `http` and `https` URLs. HTTP/1.1,
+HTTP/2, and HTTP/3 are all valid underlying protocol versions and must have
+the same observable resolution semantics. Protocol negotiation and fallback
+are implementation details. Implementations may additionally support other
+URI schemes; scripts requiring portability across conforming implementations
+must use HTTP or HTTPS.
 
-- `-h`, `--help`: write usage and exit successfully without resolving inputs.
-- `-V`, `--version`: write version information and exit successfully without
-  resolving inputs.
+## Script-facing options
+
 - `--print0`: terminate every output path with a NUL byte instead of a newline.
 - `--print-separator=CHAR`: terminate every output path with the single
   character `CHAR`. Any other length must fail. This and `--print0` are
@@ -38,29 +43,27 @@ inputs must use HTTP or HTTPS.
   member requires a correspondingly archive-shaped cache-key URL.
 - `--cache-dir=PATH`: select a cache directory. Its internal layout and the
   default cache location are not part of this specification.
-- `--cache-limit=GB` and `--cache-free-space-limit=GB`: bound cache retention
-  by total size and required free space. Eviction order and timing are not part
-  of this specification.
-- `--progress=MODE`: select `never`, `plain`, `json`, `term`, or `bar` progress.
-  Progress is diagnostic output and must not be written to standard output.
-  Its wording, frequency, rendering, and terminal detection are non-normative.
-- `--no-gatekeeper`: do not attach macOS Gatekeeper quarantine metadata to a
-  resolved Mach-O file.
+- `--progress=json`: emit machine-readable progress as newline-delimited JSON
+  objects on standard error. Each progress object must have `"type":
+  "progress"`; implementations may add fields, and scripts must ignore fields
+  they do not recognize. Progress frequency is not guaranteed, and successful
+  resolution does not require any progress object to be emitted.
 
-Unknown options and missing or malformed values must fail. Options may also use
-the separated form, for example `--cache-dir PATH`.
+Missing or malformed values for these options must fail. Value-taking options
+must also accept the separated form, for example `--cache-dir PATH`.
 
 ## Resolution
 
-For each input, the command must resolve the HTTP resource into a stable local
-cache entry and print its absolute path. A successful path must continue to
-exist after the command exits, subject to later cache eviction. Repeated
-resolution may reuse a fresh response and should use standard HTTP validators
-when revalidation is required.
+For each input, the command must resolve the resource into a stable local cache
+entry and print its absolute path. A successful path must continue to exist
+after the command exits, subject to later cache eviction. Repeated resolution
+may reuse a fresh response and should use standard HTTP validators when
+revalidation is required.
 
-Direct HTTP requests must send `User-Agent: Hydraulic URL/1.0`. The command
-must honor conventional `http_proxy`, `https_proxy`, and `no_proxy` environment
-variables, with uppercase aliases accepted.
+For HTTP and HTTPS, the command must honor conventional `http_proxy`,
+`https_proxy`, and `no_proxy` environment variables, with uppercase aliases
+accepted. Incidental request headers that do not alter behavior defined here
+are implementation-specific.
 
 On systems with POSIX file permissions, a final regular file beginning with a
 hashbang (`#!`) or an ELF, Mach-O, or fat Mach-O magic value must gain the
@@ -105,7 +108,7 @@ A failure must print no path for the failing input, stop further processing,
 and return non-zero. Paths already printed for earlier inputs are not rolled
 back. Exit statuses are:
 
-- `0`: success, including `--help` and `--version`.
+- `0`: success.
 - `2`: invalid CLI syntax, such as an unknown option or missing value.
 - `1`: an invalid runtime combination or input, or a resolution, HTTP,
   archive, hash, cache, or local I/O failure.
@@ -114,8 +117,9 @@ Exact diagnostic wording is not normative.
 
 ## Explicitly non-contractual behavior
 
-Scripts must not depend on progress appearance or timing, automatic terminal
-detection, default or internal cache paths, cache entry names, temporary or
-lock files, download concurrency, setup/install shell integration, or
-platform-specific desktop integration. Those may change without a
-compatibility revision to this specification.
+Scripts must not depend on human-facing options, non-JSON progress modes,
+progress appearance or timing, automatic terminal detection, request identity
+headers, default or internal cache paths, cache limits or eviction order, cache
+entry names, temporary or lock files, download concurrency, setup/install
+shell integration, or platform-specific desktop integration. Those may change
+without a compatibility revision to this specification.
