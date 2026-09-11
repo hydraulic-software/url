@@ -36,7 +36,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: |
-            build/native/nativeCompile/run
-            build/native/nativeCompile/url
+          path: build/native/nativeCompile/run
           if-no-files-found: error

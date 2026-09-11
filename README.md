@@ -66,6 +66,8 @@ idempotent block to `.zshrc`. Keep both files together in a directory on
 position; the zsh integration prefixes it with `run`. It preserves and
 delegates to the existing zsh `accept-line` widget. Remove the section between
 the `Hydraulic URL integration` markers to remove the shell integration.
+The artifact contains only `run`; uploading both names would duplicate the
+native image because ZIP archives do not portably preserve hard links.
 
 This is a standalone Gradle project that can also be included as a module in
 the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,
