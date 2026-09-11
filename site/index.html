@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Hydraulic URL turns web addresses into stable local paths and runnable tools.">
+  <title>run — the web is your tool directory</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <a class="wordmark" href="https://github.com/hydraulic-software/url" aria-label="Hydraulic URL on GitHub">hydraulic / url</a>
+    <nav aria-label="Project links">
+      <a href="#try-it">try it</a>
+      <a href="https://github.com/hydraulic-software/url#readme">manual</a>
+      <a href="https://github.com/hydraulic-software/url">source ↗</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="intro">
+      <p class="kicker">One binary. Two commands.</p>
+      <h1>The web is your<br><em>tool directory.</em></h1>
+      <p class="lede"><code>url</code> turns an HTTP address into a stable local path. <code>run</code> resolves it and gets out of the way.</p>
+      <div class="terminal" aria-label="Example command">
+        <div class="terminal-top"><span>zsh</span><button type="button" data-copy="run https://hydraulic-software.github.io/url/ hello">copy</button></div>
+        <pre><span class="prompt">$</span> run https://hydraulic-software.github.io/url/ hello
+<span class="reply">Hello from run.zip.
+argument: hello</span></pre>
+      </div>
+      <p class="aside">That URL is live. The directory convention selects <code>run.zip/run.sh</code> or <code>run.ps1</code> for the current platform.</p>
+    </section>
+
+    <section class="principles" aria-label="Key properties">
+      <article>
+        <span>01</span>
+        <h2>URLs become paths</h2>
+        <p>Files and members of nested archives resolve into a content cache. The printed path stays quiet enough for scripts.</p>
+        <pre>jar=$(url example.com/app.zip/app.jar)</pre>
+      </article>
+      <article>
+        <span>02</span>
+        <h2>Directories become tools</h2>
+        <p>A trailing slash means “find the conventional launcher.” Arguments pass through unchanged.</p>
+        <pre>run example.com/tool/ --version</pre>
+      </article>
+      <article>
+        <span>03</span>
+        <h2>Integrity travels with the URL</h2>
+        <p>Pin a download without a separate lock file. The fragment is checked locally and never sent to the server.</p>
+        <pre>url example.com/a#sha256=&lt;digest&gt;</pre>
+      </article>
+    </section>
+
+    <section class="try" id="try-it">
+      <div>
+        <p class="kicker">A tiny proof</p>
+        <h2>Open the package.</h2>
+        <p>The demo archive is intentionally boring: one shell script, one PowerShell script, no installer and no hidden network activity.</p>
+      </div>
+      <div class="try-actions">
+        <a class="download" href="run.zip">download run.zip <span>↓</span></a>
+        <a href="https://github.com/hydraulic-software/url/tree/master/site/demo">read the two scripts ↗</a>
+      </div>
+    </section>
+
+    <section class="install">
+      <p class="kicker">Install the command</p>
+      <h2>Download one native binary, then let it make its second name.</h2>
+      <pre><span class="prompt">$</span> chmod +x run
+<span class="prompt">$</span> ./run --install</pre>
+      <p>Builds are published for Linux and macOS on Intel and ARM. <code>run --install</code> creates the sibling <code>url</code> hard link and optional zsh integration.</p>
+      <a href="https://github.com/hydraulic-software/url/actions/workflows/native.yml">get a native build ↗</a>
+    </section>
+  </main>
+
+  <footer>
+    <p>An experiment from <a href="https://hydraulic.dev">Hydraulic</a>.</p>
+    <p>Functional contract: <a href="https://github.com/hydraulic-software/url/blob/master/SPEC.md">SPEC.md</a></p>
+  </footer>
+  <script src="site.js"></script>
+</body>
+</html>
