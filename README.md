@@ -1,79 +1,106 @@
-# hydraulic.url
+# `url` and `run`
 
-`url` resolves an HTTP(S) URL to a stable local cache path. URLs that append a
-member path to a supported archive can resolve directly into the safely
-extracted archive. The `https://` scheme may be omitted, so `url example.com`
-is equivalent to `url https://example.com`. The stable, script-facing CLI
-contract is defined in [SPEC.md](SPEC.md).
+* `url` downloads the given URL to a disk cache and prints its path.
+* `run` takes a URL, appends a well known path and executes what it finds there, with `zsh` integration so you can run URLs directly.
 
-Archives may be nested, for example
-`url example.com/outer.zip/dir/inner.zip/file.txt`.
+```shell
+$ run --install
 
-Multiple URLs may be supplied as arguments or as lines on standard input.
-Blank lines and lines whose first non-whitespace character is `#` are ignored.
-Each resulting path is newline-terminated by default; use `--print0` for NUL
-termination or `--print-separator=:` to construct output such as a classpath.
+$ url https://raw.githubusercontent.com/hydraulic-software/url/refs/heads/master/README.md
+/Users/mikehearn/Library/Caches/./entries/8d/0f/8d0fd7ca687ebe77/content/README.md
 
-Append `#sha256=<64 hex characters>` to require that the final resolved file
-has the given SHA-256 digest. The fragment is not sent to the server and works
-for both ordinary downloads and individual files selected from archives.
+$ https://example.com --version
+```
 
-On Unix-like systems, resolved hashbang scripts and ELF, Mach-O, or fat Mach-O
-binaries automatically gain execute permission. On macOS, Mach-O results also
-receive Gatekeeper quarantine metadata; use `--no-gatekeeper` to opt out.
+They're like curl, but simpler when you don't want to manage the downloaded files. Useful with substitutions!
+`url` cleans up the cache when it grows too large, or when disk space falls too low. The `https://` part is optional:
 
-A hashbang script may override unusable or incorrect origin cache headers by
-placing `# Cache-Control: DIRECTIVES` or `// Cache-Control: DIRECTIVES` on the
-line immediately after its hashbang. For example, `# Cache-Control:
-max-age=3600` keeps the cached script fresh for one hour, while `#
-Cache-Control: no-cache` revalidates every time.
+```
+$ file `url hydraulic.dev`
+/Users/mikehearn/Library/Caches/dev.hydraulic/url-tool/entries/14/35/14353bf86b68943b/content/download: HTML document text, Unicode text, UTF-8 text, with very long lines (26118)
+```
+
+## Archives
+
+When a URL contains a .zip or tarball, paths within the archive can be appended and `url` will print the path to
+that file within the extracted archive. `/` at the end counts as the root of the archive:
+
+```shell
+$ url https://github.com/sharkdp/bat/archive/refs/tags/v0.26.1.zip
+/Users/mikehearn/Library/Caches/./entries/45/99/4599d2be0fea81b5/content/v0.26.1.zip
+
+$ url https://github.com/sharkdp/bat/archive/refs/tags/v0.26.1.zip/
+/Users/mikehearn/Library/Caches/entries/33/e8/33e8825e5015aac5/content
+
+$ ls `url https://github.com/sharkdp/bat/archive/refs/tags/v0.26.1.zip/`
+assets          Cargo.lock      CHANGELOG.md    diagnostics     examples        LICENSE-MIT     README.md       SECURITY.md     tests
+build           Cargo.toml      CONTRIBUTING.md doc             LICENSE-APACHE  NOTICE          rustfmt.toml    src
+
+$ head -n 1 `url https://github.com/sharkdp/bat/archive/refs/tags/v0.26.1.zip/NOTICE`
+Copyright (c) 2018-2021 bat-developers (https://github.com/sharkdp/bat).
+```
+
+Archives may be nested, for example `url example.com/outer.zip/dir/inner.zip/file.txt`.
+
+## Proxies
 
 HTTP requests honor the conventional `http_proxy`, `https_proxy`, and
 `no_proxy` environment variables (with uppercase aliases also accepted).
 `no_proxy` accepts comma-separated hosts or domain suffixes, optional ports,
 and `*` to bypass proxies for every request.
 
-Downloads show animated progress on stderr when stderr is an interactive
-terminal, so stdout remains safe for command substitution such as
-`path=$(url example.com/archive.zip/file)`. Use `--progress=never` to disable
-progress, `--progress=plain` for line-oriented human output, or
-`--progress=json` for Progress4J JSON Lines. Automatic mode is quiet when
-stderr is redirected or `TERM=dumb`, and honors `NO_COLOR`.
+## Progress tracking
 
-Use `--progress=osc` to emit only terminal-native OSC 9;4 progress codes on
-stderr, even when it is redirected, for example
-`url --progress=osc example.com/file 2>progress.osc`. Supporting terminal
-emulators can use these codes to show progress in a tab, taskbar, or other
-native UI without a hand-drawn terminal animation.
+If stderr points to an interactive terminal then `url` emits OSC progress bar events. Modern terminal emulators like
+iTerm2 can render these nicely in the UI. You can also use the `--progress=bar` flag to get a nice animated Unicode
+progress bar. Because stderr is inherited this works even inside substitutions.
 
-The same native image also acts as `run` when invoked through a hard link of
-that name. `run URL [ARG...]` resolves and executes a URL while preserving the
-remaining arguments. A URL with no path or a path ending in `/` names a tool
-directory: `run` appends `run.zip/run.sh` on Unix or `run.zip/run.ps1` on
-Windows and resolves the startup script from that archive.
+Progress events can be emitted as JSON or plain text if you wish also.
 
-Download and extract the `run-<platform>` artifact, then install it without
-renaming:
+## Running programs
 
-```sh
-chmod +x run
-./run --install
+`run foobar.com --help` is equivalent to:
+
+```shell
+$ `url https://foobar.com/run.zip/run.sh` --help
 ```
 
-`run --install` ensures a sibling `url` hard link exists and adds a bounded,
-idempotent block to `.zshrc`. Keep both files together in a directory on
-`PATH`. Afterwards, an explicit HTTP(S) URL can be used directly in command
-position; the zsh integration prefixes it with `run`. It preserves and
-delegates to the existing zsh `accept-line` widget. Remove the section between
-the `Hydraulic URL integration` markers to remove the shell integration.
-The artifact contains only `run`; uploading both names would duplicate the
-native image because ZIP archives do not portably preserve hard links.
+On Windows it will use `run.ps1` in the zip instead.
 
-This is a standalone Gradle project that can also be included as a module in
-the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,
-tests, and GitHub Actions workflow are self-contained. The JARs in `libs/` are
-temporary until the corresponding Hydraulic libraries are published to Maven
-Central.
+Because of the caching, this means the program at `foobar.com` will keep itself up to date automatically.
 
-Build and test with `./gradlew test`. Build the native command with GraalVM 25
-using `./gradlew nativeCompile`.
+`run.zip` can contain anything but it's conventional and strongly recommended that:
+
+* It be small. This is a stub script, not the full program.
+* It use `url` to download the right program for the host by detecting the OS and CPU arch.
+* The downloaded program is run from inside the disk cache, not copied elsewhere or "installed".
+* It respect the `V` environment variable to select a specific version of the program.
+* It is silent by default. If the `RUN_LOG` environment variable is set, it can emit logs to stderr.
+
+## Security
+
+`url` sets the +x bit on UNIX automatically for files that are detected to be native binaries or have a hashbang line.
+
+URLs can be hash locked by adding `#sha256=....`. A mismatch will cause `url` to exit with an error code and no path is printed.
+
+On macOS `url` marks executables for Gatekeeper checks on first run unless you pass `--no-gatekeeper`. That means programs are expected to be signed, and will be checked by Apple for malware. It's not recommended to override Gatekeeper: signing is cheap and helps keep the macOS ecosystem secure. If you distribute binaries, you have a responsibility to do it. If you don't like the code signing regime Apple maintains, use Linux!
+
+## File lists
+
+You can pass lists of URLs via stdin:
+
+```
+$ url <<'EOF'
+# This is a comment
+https://github.com/sharkdp/bat/archive/refs/tags/v0.26.1.zip#sha256=7e4ce5325c1fee3fc80a26324e203e7c5ed89096cf7c4bdc67d61a97f612c912
+
+# Another comment
+https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_64-apple-darwin.tar.gz#sha256=830d63b0bba1fa040542ec569e3cf77f60d3356b9de75116a344b061e0894245
+EOF
+/Users/mikehearn/Library/Caches/./entries/45/99/4599d2be0fea81b5/content/v0.26.1.zip
+/Users/mikehearn/Library/Caches/./entries/73/8f/738fa741db39ddc1/content/bat-v0.26.1-x86_64-apple-darwin.tar.gz
+```
+
+Blank lines and lines whose first non-whitespace character is `#` are ignored.
+Each resulting path is newline-terminated by default; use `--print0` for NUL
+termination or `--print-separator=:` to construct output such as a classpath.
