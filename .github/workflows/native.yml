@@ -15,13 +15,13 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-24.04
-            artifact: url-linux-amd64
+            artifact: run-linux-amd64
           - runner: ubuntu-24.04-arm
-            artifact: url-linux-arm64
+            artifact: run-linux-arm64
           - runner: macos-15-intel
-            artifact: url-macos-amd64
+            artifact: run-macos-amd64
           - runner: macos-15
-            artifact: url-macos-arm64
+            artifact: run-macos-arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +37,6 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: |
-            build/native/nativeCompile/url
             build/native/nativeCompile/run
+            build/native/nativeCompile/url
           if-no-files-found: error

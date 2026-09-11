@@ -42,7 +42,7 @@ tasks.test {
 
 graalvmNative {
     binaries.named("main") {
-        imageName.set("url")
+        imageName.set("run")
         mainClass.set(application.mainClass)
         sharedLibrary.set(false)
         javaLauncher.set(javaToolchains.launcherFor {
@@ -58,9 +58,9 @@ tasks.register("nativePair") {
     val nativeDirectory = layout.buildDirectory.dir("native/nativeCompile")
     outputs.files(nativeDirectory.map { it.file("url") }, nativeDirectory.map { it.file("run") })
     doLast {
-        val url = nativeDirectory.get().file("url").asFile.toPath()
         val run = nativeDirectory.get().file("run").asFile.toPath()
-        Files.deleteIfExists(run)
-        Files.createLink(run, url)
+        val url = nativeDirectory.get().file("url").asFile.toPath()
+        Files.deleteIfExists(url)
+        Files.createLink(url, run)
     }
 }

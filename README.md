@@ -52,12 +52,20 @@ remaining arguments. A URL with no path or a path ending in `/` names a tool
 directory: `run` appends `run.zip/run.sh` on Unix or `run.zip/run.ps1` on
 Windows and resolves the startup script from that archive.
 
-Run `run --install` to ensure a sibling `url` hard link exists and add a
-bounded, idempotent block to `.zshrc`. Afterwards, an explicit HTTP(S) URL can
-be used directly in command position; the zsh integration prefixes it with
-`run`. It preserves and delegates to the existing zsh `accept-line` widget.
-Remove the section between the `Hydraulic URL integration` markers to remove
-the shell integration.
+Download and extract the `run-<platform>` artifact, then install it without
+renaming:
+
+```sh
+chmod +x run
+./run --install
+```
+
+`run --install` ensures a sibling `url` hard link exists and adds a bounded,
+idempotent block to `.zshrc`. Keep both files together in a directory on
+`PATH`. Afterwards, an explicit HTTP(S) URL can be used directly in command
+position; the zsh integration prefixes it with `run`. It preserves and
+delegates to the existing zsh `accept-line` widget. Remove the section between
+the `Hydraulic URL integration` markers to remove the shell integration.
 
 This is a standalone Gradle project that can also be included as a module in
 the Hydraulic product repository. Its wrapper, vendored Hydraulic dependencies,
