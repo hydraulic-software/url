@@ -16,6 +16,9 @@ dependencies {
     implementation("dev.progress4j:progress-api")
     implementation("dev.progress4j:progress-terminal")
     implementation("dev.progress4j:progress-utils")
+    // Mordant 3.1.0 fixes its macOS/AArch64 native-image ioctl ABI, which
+    // otherwise corrupts terminal dimensions and can segfault during redraw.
+    implementation("com.github.ajalt.mordant:mordant:3.1.0")
     implementation(libs.info.picocli)
     kapt(libs.info.picocli.codegen)
     runtimeOnly(libs.org.tinylog.impl)
