@@ -405,9 +405,11 @@ internal fun parseArchiveURL(uri: URI, depth: Int = 0): ArchiveURL? {
     return ArchiveURL(archiveURI, member)
 }
 
-private val ARCHIVE_SUFFIXES = listOf(".tar.gz", ".tar.bz2", ".tar.xz", ".tar.Z", ".zip", ".tar")
+private val ARCHIVE_SUFFIXES = listOf(
+    ".tar.zstd", ".tar.zst", ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.Z", ".zip", ".tar"
+)
 
-private fun URI.isRemoteTarball(): Boolean = ARCHIVE_SUFFIXES.dropLast(2).plus(".tar")
+private fun URI.isRemoteTarball(): Boolean = ARCHIVE_SUFFIXES.filterNot { it == ".zip" }
     .any { path.endsWith(it, ignoreCase = true) }
 
 private fun decodePathComponent(rawComponent: String): String = URI("https://hydraulic.invalid/$rawComponent").path.removePrefix("/")

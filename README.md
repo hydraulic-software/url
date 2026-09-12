@@ -16,8 +16,7 @@ They're like curl, but simpler when you don't want to manage the downloaded file
 `url` cleans up the cache when it grows too large, and refuses new downloads
 when less than 100 MB is free. Override the threshold with
 `--min-free-space=MB` or `URL_MIN_FREE_SPACE_MB`; use `0` to disable the guard.
-The older `--cache-free-space-limit=GB` spelling remains accepted. The
-`https://` part is optional:
+The `https://` part is optional:
 
 ```
 $ file `url hydraulic.dev`
@@ -50,10 +49,10 @@ Remote tar archives are decompressed directly from the HTTP response into the
 extraction cache, so the compressed tarball is not retained. If that exact
 tarball is already in the download cache, the local copy is reused. Supported
 tar forms are uncompressed `.tar`, gzip (`.tar.gz`), bzip2 (`.tar.bz2`), XZ
-(`.tar.xz`), and UNIX compress (`.tar.Z`); ZIP is also supported but requires a
-seekable cached file. Extraction stays in-process instead of invoking system
-`tar` or codec commands, which keeps behavior and security checks identical on
-Linux, macOS, and Windows and avoids depending on locally installed tools.
+(`.tar.xz`), Zstandard (`.tar.zst` and `.tar.zstd`), and UNIX compress
+(`.tar.Z`); ZIP is also supported but requires a seekable cached file.
+Extraction stays in-process, consistently across Linux, macOS, and Windows,
+without depending on locally installed tools.
 
 ## Proxies
 

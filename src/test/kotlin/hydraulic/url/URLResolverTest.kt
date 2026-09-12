@@ -2,6 +2,7 @@ package hydraulic.url
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import io.airlift.compress.v3.zstd.ZstdOutputStream
 import hydraulic.diskcache.LocalDiskCache
 import hydraulic.diskcache.http.HttpResourceCache
 import hydraulic.diskcache.http.HttpTransport
@@ -365,6 +366,24 @@ class URLResolverTest {
             URLResolver(cache, transport = transport).resolve(URI("$archiveURI/bin/tool")).use {
                 assertEquals("cached member", it.path.readText())
             }
+        }
+    }
+
+    @Test
+    fun `zstandard tarball streams into extracted cache`() {
+        val tarball = tarZstdOf("tool/member" to "zstandard member")
+        val transport = HttpTransport { uri, _ ->
+            if (uri.path.endsWith("tool.tar.zst"))
+                HttpTransport.Response(200, emptyMap(), ByteArrayInputStream(tarball))
+            else
+                HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache, transport = transport).resolve(URI("https://example.com/tool.tar.zst/member")).use {
+                assertEquals("zstandard member", it.path.readText())
+            }
+            assertFalse(cache.has(HttpResourceCache.cacheKey(URI("https://example.com/tool.tar.zst"))))
         }
     }
 
@@ -855,6 +874,21 @@ class URLResolverTest {
                 for ((name, contents) in files) {
                     val data = contents.toByteArray()
                     val entry = TarArchiveEntry(name).apply { size = data.size.toLong(); mode = 0b110_100_100 }
+                    tar.putArchiveEntry(entry)
+                    tar.write(data)
+                    tar.closeArchiveEntry()
+                }
+            }
+        }
+        bytes.toByteArray()
+    }
+
+    private fun tarZstdOf(vararg files: Pair<String, String>): ByteArray = ByteArrayOutputStream().use { bytes ->
+        ZstdOutputStream(bytes).use { zstd ->
+            TarArchiveOutputStream(zstd).use { tar ->
+                for ((name, contents) in files) {
+                    val data = contents.toByteArray()
+                    val entry = TarArchiveEntry(name).apply { size = data.size.toLong() }
                     tar.putArchiveEntry(entry)
                     tar.write(data)
                     tar.closeArchiveEntry()

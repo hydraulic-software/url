@@ -19,7 +19,7 @@ class DownloadPolicy {
     @Option(
         names = ["--cache-free-space-limit"],
         paramLabel = "GB",
-        description = ["Legacy spelling for the minimum free-space threshold, in gigabytes."]
+        description = ["Set the minimum free-space threshold in gigabytes."]
     )
     var legacyMinimumFreeSpaceGB: Double? = null
 

@@ -12,6 +12,7 @@ dependencies {
     implementation(project(":hydraulic.archives"))
     implementation(project(":hydraulic.utils"))
     implementation(project(":hydraulic.utils.hashing"))
+    implementation("io.airlift:aircompressor-v3:3.6")
     implementation("dev.progress4j:progress-api")
     implementation("dev.progress4j:progress-terminal")
     implementation("dev.progress4j:progress-utils")

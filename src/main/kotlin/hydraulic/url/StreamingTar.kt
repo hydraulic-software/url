@@ -1,5 +1,6 @@
 package hydraulic.url
 
+import io.airlift.compress.v3.zstd.ZstdInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.CompressorException
@@ -22,11 +23,17 @@ internal fun extractStreamingTar(input: InputStream, destination: Path, skipSing
     destination.createDirectories()
     val source = BufferedInputStream(input)
     source.mark(1024 * 1024)
-    val decompressed = try {
-        CompressorStreamFactory().createCompressorInputStream(source)
-    } catch (_: CompressorException) {
-        source.reset()
-        source
+    val signature = source.readNBytes(4)
+    source.reset()
+    val decompressed = if (signature.contentEquals(ZSTD_MAGIC)) {
+        ZstdInputStream(source)
+    } else {
+        try {
+            CompressorStreamFactory().createCompressorInputStream(source)
+        } catch (_: CompressorException) {
+            source.reset()
+            source
+        }
     }
     TarArchiveInputStream(decompressed).use { tar ->
         while (true) {
@@ -38,6 +45,8 @@ internal fun extractStreamingTar(input: InputStream, destination: Path, skipSing
     if (skipSingleRoot)
         removeStreamingSingleRoot(destination)
 }
+
+private val ZSTD_MAGIC = byteArrayOf(0x28, 0xb5.toByte(), 0x2f, 0xfd.toByte())
 
 private fun extractTarEntry(input: InputStream, entry: TarArchiveEntry, root: Path) {
     val relative = Path.of(entry.name.removePrefix("./"))

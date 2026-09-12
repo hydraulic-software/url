@@ -20,6 +20,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0-RC")
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("org.tukaani:xz:1.9")
+    implementation("io.airlift:aircompressor-v3:3.6")
     implementation("com.github.ajalt.mordant:mordant:3.0.2")
     implementation("info.picocli:picocli:4.7.6")
     kapt("info.picocli:picocli-codegen:4.7.6")
