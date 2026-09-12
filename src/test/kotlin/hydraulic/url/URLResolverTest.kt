@@ -27,6 +27,10 @@ import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.UserDefinedFileAttributeView
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -71,6 +75,141 @@ class URLResolverTest {
         """.trimIndent()).buffered()
 
         assertEquals(listOf("example.com/one", "https://example.com/two"), readURLsFromStdin(input))
+    }
+
+    @Test
+    fun `multiple CLI URLs resolve concurrently but print in input order`() {
+        val bothStarted = CountDownLatch(2)
+        val overlapped = AtomicBoolean()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        Executors.newFixedThreadPool(2).use { serverExecutor ->
+            server.executor = serverExecutor
+            server.createContext("/") { exchange ->
+                bothStarted.countDown()
+                if (bothStarted.await(5, TimeUnit.SECONDS))
+                    overlapped.set(true)
+                val slow = exchange.requestURI.path == "/slow"
+                if (slow)
+                    Thread.sleep(150)
+                exchange.respond((if (slow) "slow" else "fast").toByteArray())
+            }
+            server.start()
+            try {
+                val stdout = ByteArrayOutputStream()
+                val command = CommandLine(URL(PrintStream(stdout)))
+                val exitCode = command.execute(
+                    "--cache-dir", (tempDir / "parallel-cache").toString(),
+                    "--progress=never",
+                    "http://127.0.0.1:${server.address.port}/slow",
+                    "http://127.0.0.1:${server.address.port}/fast"
+                )
+
+                assertEquals(0, exitCode)
+                assertTrue(overlapped.get(), "Both HTTP requests should be active together")
+                assertEquals(listOf("slow", "fast"), stdout.toString().lineSequence().filter(String::isNotBlank).map {
+                    Path.of(it).readText()
+                }.toList())
+            } finally {
+                server.stop(0)
+            }
+        }
+    }
+
+    @Test
+    fun `stdin URLs share parallel resolution and ordered output`() {
+        val bothStarted = CountDownLatch(2)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        Executors.newFixedThreadPool(2).use { serverExecutor ->
+            server.executor = serverExecutor
+            server.createContext("/") { exchange ->
+                bothStarted.countDown()
+                check(bothStarted.await(5, TimeUnit.SECONDS)) { "Requests did not overlap" }
+                val value = exchange.requestURI.path.removePrefix("/")
+                exchange.respond(value.toByteArray())
+            }
+            server.start()
+            try {
+                val stdout = ByteArrayOutputStream()
+                val input = """
+                    # Resolve together
+                    http://127.0.0.1:${server.address.port}/first
+                    http://127.0.0.1:${server.address.port}/second
+                """.trimIndent().reader().buffered()
+                val exitCode = CommandLine(URL(PrintStream(stdout), input)).execute(
+                    "--cache-dir", (tempDir / "parallel-stdin-cache").toString(),
+                    "--progress=never"
+                )
+
+                assertEquals(0, exitCode)
+                assertEquals(listOf("first", "second"), stdout.toString().lineSequence().filter(String::isNotBlank).map {
+                    Path.of(it).readText()
+                }.toList())
+            } finally {
+                server.stop(0)
+            }
+        }
+    }
+
+    @Test
+    fun `parallel progress uses stable progress4j subreports`() {
+        val reports = mutableListOf<dev.progress4j.api.ProgressReport>()
+        val progress = ParallelURLProgress(listOf("first", "second")) { reports += it }
+
+        progress.tracker(1)!!.report(dev.progress4j.api.ProgressReport.create("Downloading", 20, 5))
+        progress.tracker(0)!!.report(dev.progress4j.api.ProgressReport.create("Downloading", 10, 10))
+        progress.complete(0)
+        progress.complete(1)
+
+        val final = reports.last()
+        assertEquals("Resolving URLs", final.message)
+        assertEquals(2, final.expectedTotal)
+        assertEquals(2, final.completed)
+        assertEquals(listOf("first", "second"), final.subReports.map { it!!.message })
+    }
+
+    @Test
+    fun `parallel mapping is bounded and retains input order`() {
+        val firstWave = CountDownLatch(3)
+        val active = AtomicInteger()
+        val maximum = AtomicInteger()
+
+        val results = parallelMapOrdered((0 until 12).toList(), maxParallelism = 3) { _, value ->
+            val nowActive = active.incrementAndGet()
+            maximum.accumulateAndGet(nowActive, ::maxOf)
+            firstWave.countDown()
+            assertTrue(firstWave.await(5, TimeUnit.SECONDS), "Three workers should start together")
+            Thread.sleep(10)
+            active.decrementAndGet()
+            value * 2
+        }
+
+        assertEquals((0 until 24 step 2).toList(), results)
+        assertEquals(3, maximum.get())
+    }
+
+    @Test
+    fun `parallel mapping cancels sibling work after a failure`() {
+        val blockerStarted = CountDownLatch(1)
+        val blockerInterrupted = AtomicBoolean()
+
+        val failure = assertFailsWith<IllegalStateException> {
+            parallelMapOrdered(listOf("block", "fail"), maxParallelism = 2) { _, value ->
+                if (value == "fail") {
+                    assertTrue(blockerStarted.await(5, TimeUnit.SECONDS))
+                    error("expected failure")
+                }
+                blockerStarted.countDown()
+                try {
+                    Thread.sleep(TimeUnit.SECONDS.toMillis(30))
+                } catch (_: InterruptedException) {
+                    blockerInterrupted.set(true)
+                }
+                value
+            }
+        }
+
+        assertEquals("expected failure", failure.message)
+        assertTrue(blockerInterrupted.get(), "The outstanding worker should be interrupted before returning")
     }
 
     @Test

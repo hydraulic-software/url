@@ -102,5 +102,7 @@ EOF
 ```
 
 Blank lines and lines whose first non-whitespace character is `#` are ignored.
-Each resulting path is newline-terminated by default; use `--print0` for NUL
-termination or `--print-separator=:` to construct output such as a classpath.
+Inputs resolve concurrently with bounded parallelism, while their paths are
+printed in input order. Each resulting path is newline-terminated by default;
+use `--print0` for NUL termination or `--print-separator=:` to construct output
+such as a classpath.

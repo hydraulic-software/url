@@ -17,10 +17,11 @@ script-facing contract.
 url [OPTIONS] [URL...]
 ```
 
-When operands are present, they must be processed from left to right. When none
-are present, the command must read UTF-8 text from standard input, one URL per
-line. It must trim surrounding whitespace and ignore blank lines and lines
-whose first non-whitespace character is `#`. It must fail when no URLs remain.
+When operands are present, their output order must be left to right. Resolution
+may occur concurrently. When no operands are present, the command must read
+UTF-8 text from standard input, one URL per line. It must trim surrounding
+whitespace and ignore blank lines and lines whose first non-whitespace
+character is `#`. It must fail when no URLs remain.
 
 An input without a URI scheme must be interpreted as HTTPS. For example,
 `example.com/file` is equivalent to `https://example.com/file`.
@@ -121,9 +122,9 @@ On success, standard output must contain exactly one absolute path per input in
 input order, each followed by the selected separator. Progress and diagnostics
 must go to standard error.
 
-A failure must print no path for the failing input, stop further processing,
-and return non-zero. Paths already printed for earlier inputs are not rolled
-back. Exit statuses are:
+A failure must print no path for the failing input, stop emitting results,
+cancel outstanding resolution work where practical, and return non-zero. Paths
+already printed for earlier inputs are not rolled back. Exit statuses are:
 
 - `0`: success.
 - `2`: invalid CLI syntax, such as an unknown option or missing value.

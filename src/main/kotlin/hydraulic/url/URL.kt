@@ -6,6 +6,7 @@ import dev.progress4j.utils.ProgressJSONWriter
 import dev.progress4j.utils.OscProgressBarTracker
 import dev.progress4j.utils.ProgressPacer
 import dev.progress4j.utils.ProgressPrinter
+import dev.progress4j.utils.ProgressStreamCombiner
 import hydraulic.diskcache.LocalDiskCache
 import hydraulic.utils.os.OperatingSystemPaths
 import picocli.CommandLine
@@ -18,13 +19,22 @@ import java.lang.foreign.Linker
 import java.lang.foreign.ValueLayout
 import java.lang.invoke.MethodHandle
 import java.net.URI
+import java.io.BufferedReader
 import java.io.PrintStream
 import java.nio.file.Path
 import java.util.concurrent.Callable
+import java.util.concurrent.ExecutorCompletionService
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Resolves an HTTP(S) URL to a local path, downloading and revalidating it through a shared disk cache. */
 @Command(name = "url", description = ["Print the cached local path of an HTTP(S) resource."], mixinStandardHelpOptions = true)
-class URL : Callable<Int> {
+class URL(
+    private val stdout: PrintStream = System.out,
+    private val stdin: BufferedReader = System.`in`.bufferedReader()
+) : Callable<Int> {
     @Parameters(
         index = "0..*",
         paramLabel = "URL",
@@ -64,7 +74,7 @@ class URL : Callable<Int> {
     override fun call(): Int {
         require(printSeparator == null || printSeparator!!.length == 1) { "--print-separator requires exactly one character" }
         require(!print0 || printSeparator == null) { "--print0 and --print-separator cannot be used together" }
-        val inputs = urls.ifEmpty { readURLsFromStdin() }
+        val inputs = urls.ifEmpty { readURLsFromStdin(stdin) }
         require(inputs.isNotEmpty()) { "No URLs were supplied as arguments or on stdin" }
         require(cacheKeyURL == null || inputs.size == 1) { "--cache-key-url requires exactly one input URL" }
         val progressTracker = progressTracker(progress, System.err, System.getenv(), ::isStderrInteractive)
@@ -76,14 +86,23 @@ class URL : Callable<Int> {
         cacheConfiguration.directoryLockFileName = "LOCK"
         try {
             LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
-                for (input in inputs) {
+                val parallelProgress = ParallelURLProgress(inputs, progressTracker)
+                val paths = parallelMapOrdered(inputs) { index, input ->
                     val uri = parseURL(input)
-                    URLResolver(cache, progressTracker, gatekeeper = !noGatekeeper).resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri).use { resolved ->
-                        // Keep stdout machine-readable: diagnostics and progress must
-                        // use stderr, because callers commonly embed this command in command substitution.
-                        print(resolved.path.toAbsolutePath())
-                        print(separator)
+                    try {
+                        URLResolver(cache, parallelProgress.tracker(index), gatekeeper = !noGatekeeper)
+                            .resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri)
+                            .use { it.path.toAbsolutePath() }
+                    } finally {
+                        parallelProgress.complete(index)
                     }
+                }
+                // Keep stdout machine-readable and deterministic: diagnostics and
+                // progress use stderr, and results retain input order even when a
+                // later download finishes first.
+                for (path in paths) {
+                    stdout.print(path)
+                    stdout.print(separator)
                 }
             }
         } finally {
@@ -92,6 +111,77 @@ class URL : Callable<Int> {
         return 0
     }
 }
+
+private const val MAX_PARALLEL_RESOLUTIONS = 8
+
+/** Runs independent inputs concurrently while retaining their original order in the returned list. */
+internal fun <T, R> parallelMapOrdered(
+    inputs: List<T>,
+    maxParallelism: Int = MAX_PARALLEL_RESOLUTIONS,
+    action: (Int, T) -> R
+): List<R> {
+    require(maxParallelism > 0) { "Parallelism must be positive" }
+    if (inputs.isEmpty())
+        return emptyList()
+    if (inputs.size == 1)
+        return listOf(action(0, inputs.single()))
+
+    val parallelism = minOf(inputs.size, maxParallelism)
+    val executor = Executors.newFixedThreadPool(parallelism)
+    val completions = ExecutorCompletionService<IndexedValue<R>>(executor)
+    val futures = ArrayList<Future<IndexedValue<R>>>(inputs.size)
+    try {
+        inputs.forEachIndexed { index, input ->
+            futures += completions.submit { IndexedValue(index, action(index, input)) }
+        }
+        val results = arrayOfNulls<Any?>(inputs.size)
+        repeat(inputs.size) {
+            val result = try {
+                completions.take().get()
+            } catch (e: ExecutionException) {
+                throw e.cause ?: e
+            }
+            results[result.index] = result.value
+        }
+        @Suppress("UNCHECKED_CAST")
+        return results.map { it as R }
+    } finally {
+        futures.forEach { it.cancel(true) }
+        executor.close()
+    }
+}
+
+/** Gives each parallel resolution its own progress4j subreport. */
+internal class ParallelURLProgress(inputs: List<String>, tracker: ProgressReport.Tracker?) {
+    private val labels = inputs.map(::progressLabel)
+    private val combiner = tracker?.let { ProgressStreamCombiner(false, it) }
+    private val completed = AtomicInteger()
+    private val base = ProgressReport.create("Resolving URLs", inputs.size)
+    private val children = labels.map { label ->
+        combiner?.addSubTask()?.also { it.report(ProgressReport.createIndeterminate(label)) }
+    }
+
+    init {
+        combiner?.report(base)
+    }
+
+    fun tracker(index: Int): ProgressReport.Tracker? {
+        val child = children[index] ?: return null
+        val label = labels[index]
+        return ProgressReport.Tracker { progress ->
+            val detail = progress.message?.takeIf(String::isNotBlank)
+            child.report(progress.withMessage(if (detail == null) label else "$label — $detail"))
+        }
+    }
+
+    fun complete(index: Int) {
+        val child = children[index] ?: return
+        child.report(ProgressReport.create(labels[index], 1, 1))
+        combiner!!.report(base.withCompleted(completed.incrementAndGet().toLong()))
+    }
+}
+
+private fun progressLabel(input: String): String = input.take(80).let { if (it.length == input.length) it else "$it…" }
 
 internal fun progressTracker(
     mode: String,
