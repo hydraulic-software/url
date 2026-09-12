@@ -40,7 +40,12 @@ graalvmNative {
         sharedLibrary.set(false)
         javaLauncher.set(javaToolchains.launcherFor {
             languageVersion.set(JavaLanguageVersion.of(25))
-            vendor.set(JvmVendorSpec.matching("GraalVM Community"))
+            vendor.set(
+                if (providers.gradleProperty("oracleGraalVM").isPresent)
+                    JvmVendorSpec.ORACLE
+                else
+                    JvmVendorSpec.matching("GraalVM Community")
+            )
         })
     }
 }

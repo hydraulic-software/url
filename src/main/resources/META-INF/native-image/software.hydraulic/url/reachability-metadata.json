@@ -10,6 +10,14 @@
       ]
     }
   ],
+  "foreign": {
+    "downcalls": [
+      {
+        "returnType": "int",
+        "parameterTypes": ["int"]
+      }
+    ]
+  },
   "resources": [
     { "glob": "tinylog.properties" }
   ]

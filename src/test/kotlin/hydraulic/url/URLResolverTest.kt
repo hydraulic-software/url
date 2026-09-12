@@ -550,6 +550,27 @@ class URLResolverTest {
     }
 
     @Test
+    fun `refresh forces a cache miss and replaces the cached response`() = withServer { server ->
+        val requests = AtomicInteger()
+        server.createContext("/") { exchange ->
+            val request = requests.incrementAndGet()
+            assertEquals(null, exchange.requestHeaders.getFirst("If-None-Match"))
+            exchange.responseHeaders.add("ETag", "\"response-$request\"")
+            exchange.respond("response $request".toByteArray())
+        }
+
+        makeCache().use { cache ->
+            val uri = server.uri("/refresh")
+            URLResolver(cache).resolve(uri).use { assertEquals("response 1", it.path.readText()) }
+            URLResolver(cache).resolve(uri).use { assertEquals("response 1", it.path.readText()) }
+            URLResolver(cache, refresh = true).resolve(uri).use { assertEquals("response 2", it.path.readText()) }
+            URLResolver(cache).resolve(uri).use { assertEquals("response 2", it.path.readText()) }
+        }
+
+        assertEquals(2, requests.get())
+    }
+
+    @Test
     fun `cache policy comment must immediately follow the hashbang`() {
         val accepted = tempDir / "accepted"
         accepted.writeText("#!/usr/bin/env kotlin\n# cache-control: max-age=60\nprintln(1)\n")
@@ -760,6 +781,17 @@ class URLResolverTest {
     }
 
     @Test
+    fun `refresh has short and long command line forms`() {
+        val url = URL()
+        CommandLine(url).parseArgs("-r", "https://example.com")
+        assertTrue(url.refresh)
+
+        val run = Run(executablePath = { tempDir / "run" }, windows = false)
+        CommandLine(run).setStopAtPositional(true).parseArgs("--refresh", "https://example.com")
+        assertTrue(run.refresh)
+    }
+
+    @Test
     fun `resolved Unix script receives all arguments`() {
         val output = tempDir / "arguments"
         val script = tempDir / "tool.sh"
@@ -795,6 +827,11 @@ class URLResolverTest {
             true
         })
         assertFalse(terminalWasInspected)
+    }
+
+    @Test
+    fun `stderr interactivity probe is safe when native terminal detection is unavailable`() {
+        assertFalse(runCatching { isStderrInteractive() }.isFailure)
     }
 
 

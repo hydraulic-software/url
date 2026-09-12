@@ -35,6 +35,9 @@ class Run(
     @Option(names = ["--cache-dir"], description = ["Shared cache directory."])
     var cacheDirectory: Path = OperatingSystemPaths.current("dev.hydraulic", "url-tool").localCache
 
+    @Option(names = ["-r", "--refresh"], description = ["Ignore any cached HTTP response and download the resource again."])
+    var refresh: Boolean = false
+
     @Option(names = ["--no-gatekeeper"], description = ["Do not attach macOS Gatekeeper quarantine metadata to Mach-O results."])
     var noGatekeeper: Boolean = false
 
@@ -72,7 +75,7 @@ class Run(
                     UserAgentHttpTransport(),
                     minimumFreeSpace
                 ) { Files.getFileStore(cacheDirectory).usableSpace }
-                URLResolver(cache, tracker, gatekeeper = !noGatekeeper, transport = transport).resolve(uri).use { resolved ->
+                URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh, transport = transport).resolve(uri).use { resolved ->
                     return runResolvedPath(resolved.path.toAbsolutePath(), arguments, windows)
                 }
             }

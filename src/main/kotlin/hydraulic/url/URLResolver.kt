@@ -33,8 +33,9 @@ class URLResolver(
     progressTracker: ProgressReport.Tracker? = null,
     private val gatekeeper: Boolean = true,
     private val transport: HttpTransport = UserAgentHttpTransport(),
+    refresh: Boolean = false,
     private val resources: HttpResourceCache = HttpResourceCache(
-        cache,
+        if (refresh) RefreshingDiskCache(cache) else cache,
         transport = transport,
         progressTracker = progressTracker
     )
@@ -199,6 +200,15 @@ class URLResolver(
         throw IllegalArgumentException("Archive member URLs require a matching archive-shaped --cache-key-url")
 
     private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(directory.listDirectoryEntries().single(), this)
+}
+
+/** Makes the HTTP cache observe an existing entry as a metadata-free miss while preserving its lease and atomic replacement. */
+private class RefreshingDiskCache(private val delegate: DiskCache) : DiskCache by delegate {
+    override fun lookup(key: String): DiskCache.OpenedEntry? = delegate.lookup(key)?.let(::UncachedEntry)
+
+    private class UncachedEntry(private val delegate: DiskCache.OpenedEntry) : DiskCache.OpenedEntry by delegate {
+        override val metadata: Map<String, String> = emptyMap()
+    }
 }
 
 internal fun Path.hashbangCachePolicy(): String? {

@@ -23,6 +23,14 @@ $ file `url hydraulic.dev`
 /Users/mikehearn/Library/Caches/dev.hydraulic/url-tool/entries/14/35/14353bf86b68943b/content/download: HTML document text, Unicode text, UTF-8 text, with very long lines (26118)
 ```
 
+Pass `-r` or `--refresh` to ignore a cached HTTP response and download it again.
+
+## Building
+
+Run `./build.sh nativePair` to build the native executables. If `url` is already
+on `PATH`, the script resolves Oracle GraalVM 25 through the URL cache and points
+Gradle at that JDK; otherwise it delegates directly to `./gradlew`.
+
 ## Archives
 
 When a URL contains a .zip or tarball, paths within the archive can be appended and `url` will print the path to

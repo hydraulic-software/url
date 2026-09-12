@@ -53,6 +53,9 @@ class URL(
     )
     var cacheKeyURL: String? = null
 
+    @Option(names = ["-r", "--refresh"], description = ["Ignore any cached HTTP response and download the resource again."])
+    var refresh: Boolean = false
+
     @Option(names = ["--print0"], description = ["Terminate the returned path with a NUL byte instead of a newline."])
     var print0: Boolean = false
 
@@ -97,7 +100,13 @@ class URL(
                 val paths = parallelMapOrdered(inputs) { index, input ->
                     val uri = parseURL(input)
                     try {
-                        URLResolver(cache, parallelProgress.tracker(index), gatekeeper = !noGatekeeper, transport = transport)
+                        URLResolver(
+                            cache,
+                            parallelProgress.tracker(index),
+                            gatekeeper = !noGatekeeper,
+                            refresh = refresh,
+                            transport = transport
+                        )
                             .resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri)
                             .use { it.path.toAbsolutePath() }
                     } finally {
@@ -208,9 +217,21 @@ internal fun progressTracker(
 }
 
 internal fun isStderrInteractive(): Boolean {
-    return runCatching {
+    val nativeIsatty = runCatching {
         (ISATTY?.invokeWithArguments(STANDARD_ERROR_FILENO) as? Int ?: 0) != 0
-    }.getOrDefault(false)
+    }.getOrNull()
+    if (nativeIsatty == true)
+        return true
+    if (nativeIsatty == false)
+        return false
+
+    // GraalVM native-image may not support the dynamically linked FFM symbol
+    // lookup used above. On Unix, comparing stderr's descriptor with the
+    // controlling terminal gives us a dependency-free fallback.
+    return runCatching {
+        val stderr = Path.of("/dev/fd/$STANDARD_ERROR_FILENO")
+        java.nio.file.Files.exists(stderr) && java.nio.file.Files.isSameFile(stderr, Path.of("/dev/tty"))
+    }.getOrDefault(System.console() != null)
 }
 
 private const val STANDARD_ERROR_FILENO = 2

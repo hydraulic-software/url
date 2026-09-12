@@ -44,6 +44,9 @@ must use HTTP or HTTPS.
   member requires a correspondingly archive-shaped cache-key URL.
 - `--cache-dir=PATH`: select a cache directory. Its internal layout and the
   default cache location are not part of this specification.
+- `-r`, `--refresh`: ignore a cached HTTP response and fetch the resource
+  again. The refreshed response replaces the cache entry used by later
+  resolutions.
 - `--progress=json`: emit machine-readable progress as newline-delimited JSON
   objects on standard error. Each progress object must have `"type":
   "progress"`; implementations may add fields, and scripts must ignore fields
