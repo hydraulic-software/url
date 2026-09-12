@@ -22,6 +22,7 @@ import java.net.URI
 import java.io.BufferedReader
 import java.io.PrintStream
 import java.nio.file.Path
+import java.nio.file.Files
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.ExecutionException
@@ -33,7 +34,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Command(name = "url", description = ["Print the cached local path of an HTTP(S) resource."], mixinStandardHelpOptions = true)
 class URL(
     private val stdout: PrintStream = System.out,
-    private val stdin: BufferedReader = System.`in`.bufferedReader()
+    private val stdin: BufferedReader = System.`in`.bufferedReader(),
+    private val environment: Map<String, String> = System.getenv()
 ) : Callable<Int> {
     @Parameters(
         index = "0..*",
@@ -69,7 +71,7 @@ class URL(
     lateinit var progress: String
 
     @Mixin
-    lateinit var cacheConfiguration: LocalDiskCache.Configuration
+    lateinit var downloadPolicy: DownloadPolicy
 
     override fun call(): Int {
         require(printSeparator == null || printSeparator!!.length == 1) { "--print-separator requires exactly one character" }
@@ -77,20 +79,25 @@ class URL(
         val inputs = urls.ifEmpty { readURLsFromStdin(stdin) }
         require(inputs.isNotEmpty()) { "No URLs were supplied as arguments or on stdin" }
         require(cacheKeyURL == null || inputs.size == 1) { "--cache-key-url requires exactly one input URL" }
-        val progressTracker = progressTracker(progress, System.err, System.getenv(), ::isStderrInteractive)
+        val progressTracker = progressTracker(progress, System.err, environment, ::isStderrInteractive)
         val separator = when {
             print0 -> '\u0000'
             printSeparator != null -> printSeparator!![0]
             else -> '\n'
         }
-        cacheConfiguration.directoryLockFileName = "LOCK"
+        val minimumFreeSpace = downloadPolicy.minimumFreeSpaceBytes(environment)
+        val cacheConfiguration = downloadPolicy.cacheConfiguration()
         try {
             LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
+                val transport = MinimumFreeSpaceHttpTransport(
+                    UserAgentHttpTransport(),
+                    minimumFreeSpace
+                ) { Files.getFileStore(cacheDirectory).usableSpace }
                 val parallelProgress = ParallelURLProgress(inputs, progressTracker)
                 val paths = parallelMapOrdered(inputs) { index, input ->
                     val uri = parseURL(input)
                     try {
-                        URLResolver(cache, parallelProgress.tracker(index), gatekeeper = !noGatekeeper)
+                        URLResolver(cache, parallelProgress.tracker(index), gatekeeper = !noGatekeeper, transport = transport)
                             .resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri)
                             .use { it.path.toAbsolutePath() }
                     } finally {

@@ -87,6 +87,8 @@ suffix, the command must treat the remaining path as an archive member and try
 the archive resource. Supported suffixes are `.zip`, `.tar`, `.tar.gz`,
 `.tar.bz2`, `.tar.xz`, and `.tar.Z`, case-insensitively. Archives may be nested.
 A trailing slash after an archive name selects its extracted root.
+Remote tar archives should be streamed into their extraction entry without
+retaining a separate compressed download when no cached tarball already exists.
 
 Extraction must reject traversal and must not return a member whose resolved
 path escapes the extracted root. A single wrapper directory may be removed.
@@ -130,6 +132,12 @@ already printed for earlier inputs are not rolled back. Exit statuses are:
 - `2`: invalid CLI syntax, such as an unknown option or missing value.
 - `1`: an invalid runtime combination or input, or a resolution, HTTP,
   archive, hash, cache, or local I/O failure.
+
+Before accepting a new HTTP response body, the command must refuse the download
+when free space is below its configured safety threshold. The default is 100
+decimal megabytes and both a command-line option and environment variable must
+allow the threshold to be changed or disabled. Cache hits and HTTP 304
+responses do not constitute new downloads.
 
 Exact diagnostic wording is not normative.
 

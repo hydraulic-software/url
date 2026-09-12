@@ -20,7 +20,8 @@ import kotlin.io.path.exists
 )
 class Run(
     private val executablePath: () -> Path = ::currentExecutablePath,
-    private val windows: Boolean = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+    private val windows: Boolean = System.getProperty("os.name").startsWith("Windows", ignoreCase = true),
+    private val environment: Map<String, String> = System.getenv()
 ) : Callable<Int> {
     @Parameters(index = "0", arity = "0..1", paramLabel = "URL")
     var url: String? = null
@@ -46,7 +47,7 @@ class Run(
     lateinit var progress: String
 
     @Mixin
-    lateinit var cacheConfiguration: LocalDiskCache.Configuration
+    lateinit var downloadPolicy: DownloadPolicy
 
     override fun call(): Int {
         if (install) {
@@ -62,11 +63,16 @@ class Run(
 
         val target = requireNotNull(url) { "A URL is required" }
         val uri = runTargetURI(parseURL(target), windows)
-        val tracker = progressTracker(progress, System.err, System.getenv(), ::isStderrInteractive)
-        cacheConfiguration.directoryLockFileName = "LOCK"
+        val tracker = progressTracker(progress, System.err, environment, ::isStderrInteractive)
+        val minimumFreeSpace = downloadPolicy.minimumFreeSpaceBytes(environment)
+        val cacheConfiguration = downloadPolicy.cacheConfiguration()
         try {
             LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
-                URLResolver(cache, tracker, gatekeeper = !noGatekeeper).resolve(uri).use { resolved ->
+                val transport = MinimumFreeSpaceHttpTransport(
+                    UserAgentHttpTransport(),
+                    minimumFreeSpace
+                ) { Files.getFileStore(cacheDirectory).usableSpace }
+                URLResolver(cache, tracker, gatekeeper = !noGatekeeper, transport = transport).resolve(uri).use { resolved ->
                     return runResolvedPath(resolved.path.toAbsolutePath(), arguments, windows)
                 }
             }

@@ -19,6 +19,7 @@ import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.UserDefinedFileAttributeView
 import java.security.MessageDigest
 import java.time.Instant
+import java.time.Duration
 import java.util.HexFormat
 import java.util.UUID
 import kotlin.io.path.exists
@@ -31,9 +32,10 @@ class URLResolver(
     private val cache: DiskCache,
     progressTracker: ProgressReport.Tracker? = null,
     private val gatekeeper: Boolean = true,
+    private val transport: HttpTransport = UserAgentHttpTransport(),
     private val resources: HttpResourceCache = HttpResourceCache(
         cache,
-        transport = UserAgentHttpTransport(),
+        transport = transport,
         progressTracker = progressTracker
     )
 ) {
@@ -100,31 +102,85 @@ class URLResolver(
     }
 
     private fun resolveArchive(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
+        if (archive.archiveURI.isRemoteTarball() && parseArchiveURL(archive.archiveURI, 1) == null) {
+            if (!cache.has(HttpResourceCache.cacheKey(identityArchive.archiveURI)))
+                return resolveStreamedArchive(archive, identityArchive)
+            val downloaded = resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
+            try {
+                return resolveExtractedArchive(archive, downloaded.path)
+            } finally {
+                downloaded.close()
+            }
+        }
         val downloaded = resolveArchiveSource(archive, identityArchive)
         try {
-            val archiveFile = downloaded.path
-            val key = extractedArchiveCacheKey(archiveFile)
-            val extracted = cache.get(key) { destination ->
-                // A version directory is packaging detail, not part of the URL's logical archive root.
-                extractLocalArchive(archiveFile, destination, skipSingleRoot = true)
-            }
-            val extractedRoot = extracted.directory.toRealPath()
-            val selected = archive.member.fold(extractedRoot) { path, component -> path.resolve(component) }.normalize()
-            if (!selected.startsWith(extractedRoot) || !selected.exists()) {
-                extracted.close()
-                throw IllegalArgumentException("Archive member does not exist: ${archive.member.joinToString("/")}")
-            }
-            // Archives may contain symlinks. Resolve the selected member before returning it so a crafted archive cannot expose a path
-            // outside its immutable extraction entry.
-            val resolvedMember = selected.toRealPath()
-            if (!resolvedMember.startsWith(extractedRoot)) {
-                extracted.close()
-                throw IllegalArgumentException("Archive member escapes the archive root: ${archive.member.joinToString("/")}")
-            }
-            return ResolvedURL(resolvedMember, extracted)
+            return resolveExtractedArchive(archive, downloaded.path)
         } finally {
             downloaded.close()
         }
+    }
+
+    private fun resolveExtractedArchive(archive: ArchiveURL, archiveFile: Path): ResolvedURL {
+        val extracted = cache.get(extractedArchiveCacheKey(archiveFile)) { destination ->
+            extractLocalArchive(archiveFile, destination, skipSingleRoot = true)
+        }
+        return selectArchiveMember(archive, extracted)
+    }
+
+    private fun resolveStreamedArchive(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
+        val key = streamedArchiveCacheKey(identityArchive.archiveURI)
+        val existing = cache.lookup(key)
+        if (existing != null && streamedArchiveIsFresh(existing.metadata))
+            return selectArchiveMember(archive, existing)
+        val previousMetadata = existing?.metadata.orEmpty()
+        val previousDirectory = existing?.directory
+        existing?.close()
+        val requestHeaders = buildMap {
+            previousMetadata[STREAM_ETAG]?.let { put("If-None-Match", it) }
+            previousMetadata[STREAM_LAST_MODIFIED]?.let { put("If-Modified-Since", it) }
+        }
+        val extracted = cache.getAndCustomizeEntry(key, rerun = previousDirectory != null) { destination ->
+            val response = transport.get(archive.archiveURI, requestHeaders)
+            response.body.use { body ->
+                when (response.statusCode) {
+                    304 -> {
+                        checkNotNull(previousDirectory) { "Received HTTP 304 without cached extraction for ${archive.archiveURI}" }
+                        copyDirectory(previousDirectory, destination)
+                    }
+                    in 200..299 -> extractStreamingTar(body, destination, skipSingleRoot = true)
+                    else -> throw HttpStatusException(archive.archiveURI, response.statusCode)
+                }
+            }
+            DiskCache.EntryComputationResult(metadata = streamedArchiveMetadata(response, previousMetadata))
+        }
+        return selectArchiveMember(archive, extracted)
+    }
+
+    private fun copyDirectory(source: Path, destination: Path) {
+        Files.walk(source).use { paths ->
+            for (path in paths) {
+                val target = destination.resolve(source.relativize(path))
+                if (Files.isDirectory(path))
+                    Files.createDirectories(target)
+                else
+                    Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES)
+            }
+        }
+    }
+
+    private fun selectArchiveMember(archive: ArchiveURL, extracted: DiskCache.OpenedEntry): ResolvedURL {
+        val extractedRoot = extracted.directory.toRealPath()
+        val selected = archive.member.fold(extractedRoot) { path, component -> path.resolve(component) }.normalize()
+        if (!selected.startsWith(extractedRoot) || !selected.exists()) {
+            extracted.close()
+            throw IllegalArgumentException("Archive member does not exist: ${archive.member.joinToString("/")}")
+        }
+        val resolvedMember = selected.toRealPath()
+        if (!resolvedMember.startsWith(extractedRoot)) {
+            extracted.close()
+            throw IllegalArgumentException("Archive member escapes the archive root: ${archive.member.joinToString("/")}")
+        }
+        return ResolvedURL(resolvedMember, extracted)
     }
 
     private fun resolveArchiveSource(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
@@ -288,6 +344,39 @@ internal fun extractedArchiveCacheKey(archive: Path): String = """
     SHA-256: ${archive.fingerprint()}
 """.trimIndent()
 
+internal fun streamedArchiveCacheKey(uri: URI): String = "Streamed extracted archive\nURI: $uri"
+
+private const val STREAM_RESPONSE_TIME = "stream.response-time"
+private const val STREAM_CACHE_CONTROL = "stream.cache-control"
+private const val STREAM_ETAG = "stream.etag"
+private const val STREAM_LAST_MODIFIED = "stream.last-modified"
+
+private fun streamedArchiveMetadata(
+    response: HttpTransport.Response,
+    previous: Map<String, String>
+): Map<String, String> = buildMap {
+    putAll(previous)
+    put(STREAM_RESPONSE_TIME, Instant.now().toEpochMilli().toString())
+    fun replaceFromHeader(name: String, key: String) {
+        response.header(name)?.let { put(key, it) }
+    }
+    replaceFromHeader("cache-control", STREAM_CACHE_CONTROL)
+    replaceFromHeader("etag", STREAM_ETAG)
+    replaceFromHeader("last-modified", STREAM_LAST_MODIFIED)
+}
+
+private fun streamedArchiveIsFresh(metadata: Map<String, String>): Boolean {
+    val responseTime = metadata[STREAM_RESPONSE_TIME]?.toLongOrNull()?.let(Instant::ofEpochMilli) ?: return false
+    val directives = metadata[STREAM_CACHE_CONTROL].orEmpty().split(',').map(String::trim)
+    if (directives.any { it.equals("no-cache", true) || it.equals("no-store", true) })
+        return false
+    val maxAge = directives.firstNotNullOfOrNull { directive ->
+        val (name, value) = directive.split('=', limit = 2).let { it.first() to it.getOrElse(1) { "" } }
+        value.trim('"').toLongOrNull().takeIf { name.equals("max-age", ignoreCase = true) }
+    } ?: return false
+    return Duration.between(responseTime, Instant.now()) < Duration.ofSeconds(maxAge)
+}
+
 class ResolvedURL(val path: Path, private val entry: DiskCache.OpenedEntry) : AutoCloseable {
     override fun close() = entry.close()
 }
@@ -317,5 +406,8 @@ internal fun parseArchiveURL(uri: URI, depth: Int = 0): ArchiveURL? {
 }
 
 private val ARCHIVE_SUFFIXES = listOf(".tar.gz", ".tar.bz2", ".tar.xz", ".tar.Z", ".zip", ".tar")
+
+private fun URI.isRemoteTarball(): Boolean = ARCHIVE_SUFFIXES.dropLast(2).plus(".tar")
+    .any { path.endsWith(it, ignoreCase = true) }
 
 private fun decodePathComponent(rawComponent: String): String = URI("https://hydraulic.invalid/$rawComponent").path.removePrefix("/")

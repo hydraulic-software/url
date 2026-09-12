@@ -3,11 +3,16 @@ package hydraulic.url
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import hydraulic.diskcache.LocalDiskCache
+import hydraulic.diskcache.http.HttpResourceCache
+import hydraulic.diskcache.http.HttpTransport
 import hydraulic.archives.extractLocalArchive
 import hydraulic.utils.os.OperatingSystemPaths
 import org.apache.commons.compress.archivers.zip.UnixStat
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import picocli.CommandLine
@@ -16,6 +21,7 @@ import java.io.PrintStream
 import java.io.PrintWriter
 import java.io.StringReader
 import java.io.StringWriter
+import java.io.ByteArrayInputStream
 import java.net.InetSocketAddress
 import java.net.URI
 import java.nio.ByteBuffer
@@ -75,6 +81,42 @@ class URLResolverTest {
         """.trimIndent()).buffered()
 
         assertEquals(listOf("example.com/one", "https://example.com/two"), readURLsFromStdin(input))
+    }
+
+    @Test
+    fun `download policy defaults to 100 MB and accepts flag and environment overrides`() {
+        assertEquals(100_000_000, DownloadPolicy().minimumFreeSpaceBytes(emptyMap()))
+        assertEquals(25_000_000, DownloadPolicy().minimumFreeSpaceBytes(mapOf(MINIMUM_FREE_SPACE_ENV to "25")))
+        val policy = DownloadPolicy().apply { minimumFreeSpaceMB = 0 }
+        assertEquals(0, policy.minimumFreeSpaceBytes(mapOf(MINIMUM_FREE_SPACE_ENV to "25")))
+        assertEquals(250_000_000, DownloadPolicy().apply { legacyMinimumFreeSpaceGB = 0.25 }.minimumFreeSpaceBytes(emptyMap()))
+    }
+
+    @Test
+    fun `low space refuses a new response body but permits a not-modified response`() {
+        val closed = AtomicBoolean()
+        val body = object : ByteArrayInputStream("payload".toByteArray()) {
+            override fun close() {
+                closed.set(true)
+                super.close()
+            }
+        }
+        val lowSpace = MinimumFreeSpaceHttpTransport(
+            HttpTransport { _, _ -> HttpTransport.Response(200, emptyMap(), body) },
+            minimumBytes = 100,
+            usableSpace = { 99 }
+        )
+        val failure = assertFailsWith<IllegalStateException> { lowSpace.get(URI("https://example.com/file"), emptyMap()) }
+        assertContains(failure.message!!, "--min-free-space=0")
+        assertTrue(closed.get())
+
+        val notModified = MinimumFreeSpaceHttpTransport(
+            HttpTransport { _, _ -> HttpTransport.Response(304, emptyMap(), ByteArrayInputStream(byteArrayOf())) },
+            minimumBytes = 100,
+            usableSpace = { 0 }
+        ).get(URI("https://example.com/file"), emptyMap())
+        assertEquals(304, notModified.statusCode)
+        notModified.body.close()
     }
 
     @Test
@@ -279,6 +321,51 @@ class URLResolverTest {
             }
         }
         assertEquals(listOf("/tool.zip"), requestedPaths)
+    }
+
+    @Test
+    fun `remote tarball streams directly into extracted cache`() {
+        val tarball = tarGzOf("tool-1.0/bin/tool" to "streamed member")
+        val requests = mutableListOf<URI>()
+        val transport = HttpTransport { uri, _ ->
+            requests += uri
+            if (uri.path.endsWith("tool.tar.gz"))
+                HttpTransport.Response(
+                    200,
+                    mapOf("Cache-Control" to listOf("max-age=3600")),
+                    ByteArrayInputStream(tarball)
+                )
+            else
+                HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache, transport = transport).resolve(URI("https://example.com/tool.tar.gz/bin/tool")).use {
+                assertEquals("streamed member", it.path.readText())
+            }
+            URLResolver(cache, transport = transport).resolve(URI("https://example.com/tool.tar.gz/bin/tool")).close()
+            assertFalse(cache.has(HttpResourceCache.cacheKey(URI("https://example.com/tool.tar.gz"))))
+        }
+        assertEquals(listOf("/tool.tar.gz/bin/tool", "/tool.tar.gz", "/tool.tar.gz/bin/tool"), requests.map { it.path })
+    }
+
+    @Test
+    fun `cached tarball is extracted locally instead of fetched again`() {
+        val archiveURI = URI("https://example.com/tool.tar.gz")
+        val tarball = tarGzOf("tool-1.0/bin/tool" to "cached member")
+        makeCache().use { cache ->
+            HttpResourceCache(cache, HttpTransport { _, _ ->
+                HttpTransport.Response(200, mapOf("Cache-Control" to listOf("max-age=3600")), ByteArrayInputStream(tarball))
+            }).resolve(archiveURI).close()
+            val transport = HttpTransport { uri, _ ->
+                check(uri.path != "/tool.tar.gz") { "Cached archive must not be fetched" }
+                HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+            }
+
+            URLResolver(cache, transport = transport).resolve(URI("$archiveURI/bin/tool")).use {
+                assertEquals("cached member", it.path.readText())
+            }
+        }
     }
 
     @Test
@@ -758,6 +845,21 @@ class URLResolverTest {
             zip.putArchiveEntry(entry)
             zip.write(contents.toByteArray())
             zip.closeArchiveEntry()
+        }
+        bytes.toByteArray()
+    }
+
+    private fun tarGzOf(vararg files: Pair<String, String>): ByteArray = ByteArrayOutputStream().use { bytes ->
+        GzipCompressorOutputStream(bytes).use { gzip ->
+            TarArchiveOutputStream(gzip).use { tar ->
+                for ((name, contents) in files) {
+                    val data = contents.toByteArray()
+                    val entry = TarArchiveEntry(name).apply { size = data.size.toLong(); mode = 0b110_100_100 }
+                    tar.putArchiveEntry(entry)
+                    tar.write(data)
+                    tar.closeArchiveEntry()
+                }
+            }
         }
         bytes.toByteArray()
     }

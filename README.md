@@ -13,7 +13,11 @@ $ https://example.com --version
 ```
 
 They're like curl, but simpler when you don't want to manage the downloaded files. Useful with substitutions!
-`url` cleans up the cache when it grows too large, or when disk space falls too low. The `https://` part is optional:
+`url` cleans up the cache when it grows too large, and refuses new downloads
+when less than 100 MB is free. Override the threshold with
+`--min-free-space=MB` or `URL_MIN_FREE_SPACE_MB`; use `0` to disable the guard.
+The older `--cache-free-space-limit=GB` spelling remains accepted. The
+`https://` part is optional:
 
 ```
 $ file `url hydraulic.dev`
@@ -41,6 +45,15 @@ Copyright (c) 2018-2021 bat-developers (https://github.com/sharkdp/bat).
 ```
 
 Archives may be nested, for example `url example.com/outer.zip/dir/inner.zip/file.txt`.
+
+Remote tar archives are decompressed directly from the HTTP response into the
+extraction cache, so the compressed tarball is not retained. If that exact
+tarball is already in the download cache, the local copy is reused. Supported
+tar forms are uncompressed `.tar`, gzip (`.tar.gz`), bzip2 (`.tar.bz2`), XZ
+(`.tar.xz`), and UNIX compress (`.tar.Z`); ZIP is also supported but requires a
+seekable cached file. Extraction stays in-process instead of invoking system
+`tar` or codec commands, which keeps behavior and security checks identical on
+Linux, macOS, and Windows and avoids depending on locally installed tools.
 
 ## Proxies
 
