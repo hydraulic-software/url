@@ -1,0 +1,39 @@
+import "run:context" as c
+
+ver = c.ver ?? "0.14.0"
+
+// Convert the architecture to what the GraalVM download uses.
+jdkArch =
+  if (c.arch == "x86_64") "x64"
+  else if (c.arch == "arm64") "aarch64"
+  else throw("Unsupported architecture: \(c.arch)")
+
+jdkPlatform = c.os + "-" + jdkArch
+
+jdkHashes = new Mapping<String, String> {
+  ["linux-x64"] = "76007c309f821aaf435bce63162ea0395587fc77350801c81643fe7feea37276"
+  ["linux-aarch64"] = "7031aead8da4c6a7816c4e2be4eabfddaf7f4abcfe8e5f16134c4da69a5e70de"
+  ["macos-x64"] = "a762ca1d9a163e32790b9286f3af4c16369729ff27999d8dbab60d7be16cff2f"
+  ["macos-aarch64"] = "0b79e23c133facbad2f7aa55a3b76d17bd59d2fa15e2735bb63391ace223fd13"
+  ["windows-x64"] = "5198b29a6448cb72b9a3cef10866723e2d1e2ec4799561a344e032bb7c61e555"
+}
+
+verifierHashes = new Mapping<String, String> {
+  ["0.14.0"] = "25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
+}
+verifierLock = if (verifierHashes.containsKey(ver)) "#sha256=\(verifierHashes[ver])" else ""
+
+archive = if (c.os == "windows") "zip" else "tar.gz"
+bundle = if (c.os == "macos") "Contents/Home/" else ""
+
+urls {
+  java = "https://download.oracle.com/graalvm/25/latest/graalvm-jdk-25_\(jdkPlatform)_bin.\(archive)/\(bundle)bin/java#sha256=\(jdkHashes[jdkPlatform])"
+  verifier = "https://repo1.maven.org/maven2/dev/cel/verifier-cli/\(ver)/verifier-cli-\(ver).jar\(verifierLock)"
+}
+
+executable = c.resolved.java
+arguments = List(
+    "--sun-misc-unsafe-memory-access=allow",
+    "--enable-native-access=ALL-UNNAMED",
+    "-jar", c.resolved.verifier,
+) + c.args

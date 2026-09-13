@@ -8,6 +8,18 @@ plugins {
     application
 }
 
+val pklNativeImageSupport = sourceSets.create("pklNativeImageSupport")
+
+configurations[pklNativeImageSupport.implementationConfigurationName].extendsFrom(
+    configurations.implementation.get()
+)
+configurations.named("nativeImageClasspath") {
+    exclude("com.github.ajalt.mordant", "mordant-jvm-ffm")
+    exclude("com.github.ajalt.mordant", "mordant-jvm-ffm-jvm")
+    exclude("com.github.ajalt.mordant", "mordant-jvm-jna")
+    exclude("com.github.ajalt.mordant", "mordant-jvm-jna-jvm")
+}
+
 dependencies {
     api(project(":hydraulic.diskcache"))
     implementation(project(":hydraulic.archives"))
@@ -21,7 +33,11 @@ dependencies {
     // otherwise corrupts terminal dimensions and can segfault during redraw.
     implementation("com.github.ajalt.mordant:mordant:3.1.0")
     implementation(libs.info.picocli)
+    implementation("org.pkl-lang:pkl-core:0.32.1")
+    implementation("org.graalvm.sdk:nativeimage:25.0.4")
     kapt(libs.info.picocli.codegen)
+
+    add(pklNativeImageSupport.compileOnlyConfigurationName, "org.graalvm.nativeimage:svm:25.0.1")
     runtimeOnly(libs.org.tinylog.impl)
     runtimeOnly("org.slf4j:slf4j-nop:2.0.16")
     testImplementation(libs.org.apache.commons.compress)
@@ -105,5 +121,19 @@ graalvmNative {
                     JvmVendorSpec.matching("GraalVM Community")
             )
         })
+        classpath.from(pklNativeImageSupport.output)
+        // Pkl's native executable initializes the language implementation at
+        // build time. Its SVM substitutions reset build-machine thread state
+        // before the image is written; application state remains runtime-only.
+        buildArgs.add("-H:+UnlockExperimentalVMOptions")
+        buildArgs.add("--initialize-at-build-time=")
+        buildArgs.add("--initialize-at-run-time=hydraulic,org.tinylog")
+        buildArgs.add("--initialize-at-run-time=org.msgpack.core.buffer.DirectBufferAccess")
+        buildArgs.add("--initialize-at-run-time=org.pkl.core.util.BaseDirectory,org.pkl.core.util.BaseDirectories,org.pkl.core.util.DebugLogger")
+        buildArgs.add("--initialize-at-run-time=org.jline.nativ,org.jline.terminal.impl.jni")
+        buildArgs.add("--no-fallback")
+        buildArgs.add("-H:IncludeResources=org/pkl/core/stdlib/.*\\.pkl")
+        buildArgs.add("-H:IncludeResourceBundles=org.pkl.core.errorMessages")
+        buildArgs.add("-H:IncludeResourceBundles=org.pkl.parser.errorMessages")
     }
 }

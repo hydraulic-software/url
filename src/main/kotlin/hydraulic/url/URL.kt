@@ -354,6 +354,4 @@ internal fun commandLine(invocationName: String = "url"): CommandLine {
         }
 }
 
-internal fun processInvocationName(): String = ProcessHandle.current().info().command()
-    .map { Path.of(it).fileName.toString() }
-    .orElse("url")
+internal fun processInvocationName(): String = Path.of(currentExecutableName()).fileName.toString()

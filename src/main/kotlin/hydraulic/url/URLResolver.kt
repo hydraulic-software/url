@@ -71,11 +71,18 @@ class URLResolver private constructor(
 
     private fun resolveOnce(uri: URI, cacheIdentity: URI): ResolvedURL {
         val expectedHash = sha256Lock(uri)
-        val resolved = resolveWithoutHashLock(uri.withoutFragment(), cacheIdentity.withoutFragment())
+        val archiveLock = parseArchiveURL(uri.withoutFragment())?.let {
+            it.member.isNotEmpty() || uri.rawPath.endsWith('/')
+        } == true
+        val resolved = resolveWithoutHashLock(
+            uri.withoutFragment(),
+            cacheIdentity.withoutFragment(),
+            archiveHash = expectedHash.takeIf { archiveLock }
+        )
         try {
             if (!resolved.path.exists())
                 damagedCacheEntry(resolved, "resolved content disappeared")
-            if (expectedHash != null) {
+            if (expectedHash != null && !archiveLock) {
                 require(resolved.path.isRegularFile()) { "SHA-256 locking requires a file result" }
                 val actualHash = resolved.path.sha256()
                 require(actualHash.equals(expectedHash, ignoreCase = true)) {
@@ -91,11 +98,11 @@ class URLResolver private constructor(
         }
     }
 
-    private fun resolveWithoutHashLock(uri: URI, cacheIdentity: URI): ResolvedURL {
+    private fun resolveWithoutHashLock(uri: URI, cacheIdentity: URI, archiveHash: String? = null): ResolvedURL {
         val archive = parseArchiveURL(uri)
         val identityArchive = parseArchiveURL(cacheIdentity)
         if (archive != null && archive.member.isEmpty() && uri.rawPath.endsWith('/'))
-            return resolveArchive(archive, identityArchive ?: invalidArchiveIdentity())
+            return resolveArchive(archive, identityArchive ?: invalidArchiveIdentity(), archiveHash)
         try {
             return resolveResource(uri, cacheIdentity).asSingleFile()
         } catch (e: HttpStatusException) {
@@ -105,7 +112,8 @@ class URLResolver private constructor(
 
         return resolveArchive(
             archive ?: throw HttpStatusException(uri, 404),
-            identityArchive ?: invalidArchiveIdentity()
+            identityArchive ?: invalidArchiveIdentity(),
+            archiveHash
         )
     }
 
@@ -133,8 +141,8 @@ class URLResolver private constructor(
         }
     }
 
-    private fun resolveArchive(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
-        if (archive.archiveURI.isRemoteTarball() && parseArchiveURL(archive.archiveURI, 1) == null) {
+    private fun resolveArchive(archive: ArchiveURL, identityArchive: ArchiveURL, archiveHash: String? = null): ResolvedURL {
+        if (archiveHash == null && archive.archiveURI.isRemoteTarball() && parseArchiveURL(archive.archiveURI, 1) == null) {
             if (!cache.has(HttpResourceCache.cacheKey(identityArchive.archiveURI)))
                 return resolveStreamedArchive(archive, identityArchive)
             val downloaded = resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
@@ -144,8 +152,14 @@ class URLResolver private constructor(
                 downloaded.close()
             }
         }
-        val downloaded = resolveArchiveSource(archive, identityArchive)
+        val downloaded = resolveArchiveSource(archive, identityArchive, archiveHash)
         try {
+            archiveHash?.let { expected ->
+                val actual = downloaded.path.sha256()
+                require(actual.equals(expected, ignoreCase = true)) {
+                    "SHA-256 mismatch: expected $expected but resolved archive has $actual"
+                }
+            }
             return resolveExtractedArchive(archive, downloaded.path)
         } finally {
             downloaded.close()
@@ -212,7 +226,7 @@ class URLResolver private constructor(
             extracted.close()
             if (retryDamagedCacheEntry)
                 throw DamagedCacheEntryException("archive member disappeared from the cache")
-            throw IllegalArgumentException("Archive member does not exist: ${archive.member.joinToString("/")}")
+            throw MissingArchiveMemberException("Archive member does not exist: ${archive.member.joinToString("/")}")
         }
         val resolvedMember = selected.toRealPath()
         if (!resolvedMember.startsWith(extractedRoot)) {
@@ -222,7 +236,7 @@ class URLResolver private constructor(
         return ResolvedURL(resolvedMember, extracted)
     }
 
-    private fun resolveArchiveSource(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
+    private fun resolveArchiveSource(archive: ArchiveURL, identityArchive: ArchiveURL, archiveHash: String?): ResolvedURL {
         try {
             return resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
         } catch (e: HttpStatusException) {
@@ -230,7 +244,7 @@ class URLResolver private constructor(
                 throw e
             val outerArchive = parseArchiveURL(archive.archiveURI, 1) ?: throw e
             val identityOuterArchive = parseArchiveURL(identityArchive.archiveURI, 1) ?: invalidArchiveIdentity()
-            return resolveArchive(outerArchive, identityOuterArchive)
+            return resolveArchive(outerArchive, identityOuterArchive, archiveHash)
         }
     }
 
@@ -257,6 +271,8 @@ class URLResolver private constructor(
         throw IOException("Cache entry is incomplete after rebuilding it: $detail", cause)
     }
 }
+
+internal class MissingArchiveMemberException(message: String) : IllegalArgumentException(message)
 
 private class DamagedCacheEntryException(message: String, cause: Throwable? = null) : IOException(message, cause)
 

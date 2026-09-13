@@ -1,83 +1,146 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Hydraulic URL turns web addresses into stable local paths and runnable tools.">
-  <title>run — the web is your tool directory</title>
-  <link rel="stylesheet" href="style.css">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="url caches HTTP resources as local paths. run executes remote tools.">
+    <title>url — HTTP on demand in your shell</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.css">
 </head>
 <body>
-  <header>
-    <a class="wordmark" href="https://github.com/hydraulic-software/url" aria-label="Hydraulic URL on GitHub">hydraulic / url</a>
+<header>
+    <a class="wordmark" href="https://github.com/hydraulic-software/url" aria-label="Hydraulic URL on GitHub">url</a>
     <nav aria-label="Project links">
-      <a href="#try-it">try it</a>
-      <a href="https://github.com/hydraulic-software/url#readme">manual</a>
-      <a href="https://github.com/hydraulic-software/url">source ↗</a>
+        <a href="#cache">cache</a>
+        <a href="#run">run</a>
+        <a href="https://github.com/hydraulic-software/url#readme">man</a>
+        <a href="https://github.com/hydraulic-software/url">source ↗</a>
     </nav>
-  </header>
+</header>
 
-  <main>
-    <section class="intro">
-      <p class="kicker">One binary. Two commands.</p>
-      <h1>The web is your<br><em>tool directory.</em></h1>
-      <p class="lede"><code>url</code> turns an HTTP address into a stable local path. <code>run</code> resolves it and gets out of the way.</p>
-      <div class="terminal" aria-label="Example command">
-        <div class="terminal-top"><span>zsh</span><button type="button" data-copy="run https://hydraulic-software.github.io/url/ hello">copy</button></div>
-        <pre><span class="prompt">$</span> run https://hydraulic-software.github.io/url/ hello
+<main>
+    <section class="intro" id="cache">
+        <h1>HTTP on demand<br><em>in your shell</em></h1>
+        <p class="lede"><code>url</code> downloads an HTTP resource to a disk cache and prints its local path.
+            <code>run</code> does that, then executes it.</p>
+        <div class="terminal" aria-label="Resolve a URL to a local path">
+            <div class="terminal-top"><span>sh</span>
+                <button type="button" data-copy="chafa `url https://omarchy.org/brand/omarchy-wordmark.svg`">copy
+                </button>
+            </div>
+            <pre><span class="prompt">~ ❯</span> url https://omarchy.org/brand/omarchy-wordmark.svg
+<span class="reply">/home/mike/.cache/dev.hydraulic/url-tool/cache/entries/af/2c/af2c4969d14f020b/content/omarchy-wordmark.svg</span>
+
+<span class="prompt">~ ❯</span> chafa `url https://omarchy.org/brand/omarchy-wordmark.svg`</pre>
+            <div class="terminal-art"><img src="https://omarchy.org/brand/omarchy-wordmark.svg" alt="Omarchy wordmark">
+            </div>
+        </div>
+        <p class="aside">HTTP's caching protocol is used; run it again and the result comes back fast. If the resource
+            has changed it's refreshed.</p>
+    </section>
+
+    <section class="features" aria-label="How it works">
+        <article class="feature" id="archives">
+            <div class="feature-copy">
+                <h2>Link inside archives</h2>
+                <p>Treat zips and tarballs like directories. The archive is downloaded and extracted to the disk cache,
+                    and the path is printed.</p>
+            </div>
+            <div class="command">
+          <pre><span class="prompt">$</span> ls `url downloads.hydraulic.dev/conveyor/conveyor-22.2-linux-amd64.tar.gz/lib`
+<span class="reply">app&nbsp;&nbsp;&nbsp;runtime</span></pre>
+            </div>
+        </article>
+
+        <article class="feature" id="run">
+            <div class="feature-copy">
+                <h2>Execute URLs directly</h2>
+                <p class="aside"><code>run</code> appends <code>/run.zip/run.pkl</code>, resolves the package's
+                    URLs, then executes its launch plan.</p>
+            </div>
+            <div class="command">
+                <p class="command-label">sh</p>
+                <pre><span class="prompt">$</span> run https://hydraulic-software.github.io/url/ hello
 <span class="reply">Hello from run.zip.
 argument: hello</span></pre>
-      </div>
-      <p class="aside">That URL is live. The directory convention selects <code>run.zip/run.sh</code> or <code>run.zip/run.ps1</code> for the current platform.</p>
-    </section>
+                <a class="source-link" href="https://github.com/hydraulic-software/url/tree/master/site/demo">inspect
+                    the package ↗</a>
+            </div>
+            <div class="feature-copy">
+                <p class="aside">On <code>zsh</code> just use an HTTPS URL as a command directly.</p>
+            </div>
+            <div class="command">
+                <p class="command-label">zsh</p>
+                <pre><span class="prompt">$</span> https://hydraulic-software.github.io/url/ hello
+<span class="reply">Hello from run.zip.
+argument: hello</span></pre>
+            </div>
+            <div class="feature-copy">
+                <p class="aside">The <code>run.pkl</code> file detects the running OS and produces the right
+                    launch plan.</p>
+            </div>
+        </article>
 
-    <section class="principles" aria-label="Key properties">
-      <article>
-        <span>01</span>
-        <h2>URLs become paths</h2>
-        <p>Files and members of nested archives resolve into a content cache. The printed path stays quiet enough for scripts.</p>
-        <pre>jar=$(url example.com/app.zip/app.jar)</pre>
-      </article>
-      <article>
-        <span>02</span>
-        <h2>Directories become tools</h2>
-        <p>A trailing slash means “find the conventional launcher.” Arguments pass through unchanged.</p>
-        <pre>run example.com/tool/ --version</pre>
-      </article>
-      <article>
-        <span>03</span>
-        <h2>Integrity travels with the URL</h2>
-        <p>Pin a download without a separate lock file. The fragment is checked locally and never sent to the server.</p>
-        <pre>url example.com/a#sha256=&lt;digest&gt;</pre>
-      </article>
-    </section>
+        <article class="feature" id="pin">
+            <div class="feature-copy">
+                <h2>Pin the server down</h2>
+                <p>Add a SHA-256 fragment to lock expected content.</p>
+            </div>
+            <div class="command">
+                <p class="command-label">sh</p>
+                <pre><span class="prompt">$</span> url example.com/tool#sha256=e9e433…602712
+<span class="reply">…/content/tool</span></pre>
+                <pre><span class="prompt">$</span> url example.com/tool#sha256=e9e433…ffffff
+<span class="reply">url: SHA-256 mismatch: expected e9e433…ffffff but resolved e9e433…602712</span></pre>
+            </div>
+        </article>
 
-    <section class="try" id="try-it">
-      <div>
-        <p class="kicker">A tiny proof</p>
-        <h2>Open the package.</h2>
-        <p>The demo archive is intentionally boring: one shell script, one PowerShell script, no installer and no hidden network activity.</p>
-      </div>
-      <div class="try-actions">
-        <a class="download" href="run.zip">download run.zip <span>↓</span></a>
-        <a href="https://github.com/hydraulic-software/url/tree/master/site/demo">read the two scripts ↗</a>
-      </div>
-    </section>
+        <article class="feature" id="file-lists">
+            <div class="feature-copy">
+                <h2>Resolve in bulk</h2>
+                <p class="aside">Multiple URLs are downloaded in parallel. Comments and blank lines are ignored, so the input doubles as a small lockfile.</p>
+            </div>
+            <div class="command">
+                <p class="command-label">sh</p>
+                <pre><span class="prompt">$</span> url &lt;&lt;'EOF'
+# pinned inputs
+https://a.example/a#sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
-    <section class="install">
-      <p class="kicker">Install the command</p>
-      <h2>Download one native binary, then let it make its second name.</h2>
-      <pre><span class="prompt">$</span> chmod +x run
-<span class="prompt">$</span> ./run --install</pre>
-      <p>Builds are published for Linux and macOS on Intel and ARM. <code>run --install</code> creates the sibling <code>url</code> hard link and optional zsh integration.</p>
-      <a href="https://github.com/hydraulic-software/url/actions/workflows/native.yml">get a native build ↗</a>
-    </section>
-  </main>
+# another pinned input
+https://b.example/b#sha256=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+EOF
+<span class="reply">…/content/a
+…/content/b</span></pre>
+            </div>
+        </article>
 
-  <footer>
-    <p>An experiment from <a href="https://hydraulic.dev">Hydraulic</a>.</p>
-    <p>Functional contract: <a href="https://github.com/hydraulic-software/url/blob/master/SPEC.md">SPEC.md</a></p>
-  </footer>
-  <script src="site.js"></script>
+        <article class="feature" id="progress">
+            <div class="feature-copy">
+                <h2>Watch a download</h2>
+                <p class="aside">Use <code>--progress=bar</code> for an animated Unicode progress bar while <code>url</code> downloads.</p>
+            </div>
+            <div class="command cast-command">
+                <p class="command-label">sh · asciicast</p>
+                <div id="progress-cast" aria-label="Animated url download progress"></div>
+            </div>
+        </article>
+
+        <article class="feature" id="spec">
+            <div class="feature-copy">
+                <h2>Reimplementable</h2>
+                <p class="aside">Don't like the reference implementation? No problem.</p>
+                <p class="aside">Give the <a href="https://github.com/hydraulic-software/url/blob/master/SPEC.md">specification</a> to your favourite model and make a better one.</p>
+            </div>
+        </article>
+    </section>
+</main>
+
+<footer>
+    <p>Built by <a href="https://hydraulic.dev">Hydraulic</a>.</p>
+    <p>Contract: <a href="https://github.com/hydraulic-software/url/blob/master/SPEC.md">SPEC.md</a></p>
+</footer>
+<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.min.js"></script>
+<script src="site.js"></script>
 </body>
 </html>

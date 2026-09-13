@@ -115,55 +115,10 @@ The exact extraction-cache path is not part of this specification.
 ### SHA-256 locks
 
 An input may append `#sha256=<64 hexadecimal characters>`. The fragment must
-not be sent in the HTTP request. The command must hash the final file, including
-an archive member, and fail without printing that result on mismatch. Locking
-a directory must fail. Other URI fragments have no locking meaning.
-
-## Companion `run` command
-
-The same executable may be exposed under the name `run`. It must select runner
-behavior from its invoked file name, resolve its first operand, and execute the
-result with every remaining operand passed unchanged as a separate argument.
-Options after the URL belong to the resolved program, not to `run`.
-
-An HTTP(S) URL with no path component or with a path ending in `/` identifies
-a tool directory. Before resolution, `run` must append `run.zip/run.sh` on
-Unix-like systems or `run.zip/run.ps1` on Windows. Other URL paths are resolved
-directly. A PowerShell startup script must be invoked through PowerShell on
-Windows.
-
-If the first operand names an existing local directory, `run` must bypass URL
-resolution and execute `run.sh` from that directory on Unix-like systems or
-`run.ps1` on Windows. The Unix startup script does not need a shebang or
-executable permission. Remaining operands are passed to it unchanged.
-
-On Unix-like systems, `run` must start a POSIX shell wrapper that enables
-`errexit`, defines `OS` and `ARCH` as unexported shell variables, defines the
-runscript utility API, and dot-sources `run.sh`. On Windows it must provide the
-analogous variables and utilities while dot-sourcing `run.ps1` in PowerShell.
-These variables and utilities must not propagate to a program launched by the
-runscript unless the runscript explicitly exports them.
-
-`OS` must be `linux`, `macos`, `android`, `freebsd`, or `windows` on those
-systems. `ARCH` must be `x86_64` on x86-64 systems and `arm64` on AArch64
-systems. Implementations may define stable lowercase values for other systems
-and architectures; scripts must reject values they do not support.
-
-A non-empty `@VERSION` suffix on the locator, before any query or fragment,
-must be removed before local lookup or URL resolution and exposed to the
-startup script as `VER=VERSION`. For example, `run example.com/tool@1.2.3`
-resolves `example.com/tool` with the shell variable `VER=1.2.3`. If there is no
-version suffix, `VER` must be unset. `run` must remove inherited `OS`, `ARCH`,
-and `VER` environment values before starting the wrapper.
-
-The runscript utility API must include a shell function named `url`. It must
-invoke the real `url` command with `run`'s cache directory, refresh, progress,
-Gatekeeper, and download-policy settings as defaults, followed by the
-runscript's arguments unchanged. The function itself must not be exported.
-
-`run --install` must ensure that sibling `run` and `url` command names refer to
-hard links of the same executable and install the optional shell integration.
-Shell integration may be platform-specific and is otherwise non-contractual.
+not be sent in the HTTP request. For a non-archive URL, the command must hash
+the final file. For an archive URL, including one selecting a member, it must
+hash the complete archive before extraction. A lock selecting a directory must
+fail. Other URI fragments have no locking meaning.
 
 ## Output, diagnostics, and failure
 
@@ -183,12 +138,3 @@ already printed for earlier inputs are not rolled back. Exit statuses are:
   archive, hash, cache, or local I/O failure.
 
 Exact diagnostic wording is not normative.
-
-## Explicitly non-contractual behavior
-
-Scripts must not depend on human-facing options, non-JSON progress modes,
-progress appearance or timing, automatic terminal detection, request identity
-headers, default or internal cache paths, cache limits or eviction order, cache
-entry names, temporary or lock files, download concurrency, setup/install
-shell integration, or platform-specific desktop integration. Those may change
-without a compatibility revision to this specification.

@@ -28,7 +28,7 @@ jobs:
       - name: Package demo tool
         run: |
           cd site/demo
-          zip -X ../run.zip run.sh run.ps1
+          zip -X ../run.zip run.pkl demo.sh demo.ps1
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

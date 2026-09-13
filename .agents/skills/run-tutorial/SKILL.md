@@ -83,7 +83,7 @@ There is though a living document called [CONVENTIONS.md](references/CONVENTIONS
 
 `run` doesn't immediately execute `run.sh`. That would be convenient for sure, but we live in an ever more dangerous world. Supply chain attacks are now common, especially on developers, so `run` tries to protect you from them with support for sandboxing.
 
-Operating systems and even individual Linux distributions vary radically in how they support sandboxing, so `run` doesn't mandate any specific system or approach. Instead it lets programs advertise a set of abstract permissions which implementations of `run` can then enforce by delegating to OS specific APIs like Apple's Seatbelt, AppArmor, Landlock or Win32.
+Operating systems and even individual Linux distributions vary radically in how they support sandboxing, so `run` doesn't mandate any specific system or approach. Instead it lets programs advertise a set of abstract permissions which implementations of `run` can then enforce by delegating to the operating system's native sandboxing features.
 
 Let's have a look:
 
@@ -95,7 +95,7 @@ $ cat metadata.cel
 }
 ```
 
-Cowsay declares no permissions!
+The [Common Expression Language](https://www.cel.dev) is a way to encode and evaluate simple expressions. It's robust against malicious inputs but is more flexible than raw JSON. It can be used to adapt the set of permissions based on command line arguments, operating system, and some other bits of environment data.
 
 ## Windows
 

@@ -1,0 +1,9 @@
+import "run:context" as c
+
+urls {}
+
+executable = if (c.os == "windows") "powershell.exe" else "\(c.packageDir)/demo.sh"
+arguments = if (c.os == "windows")
+  List("-NoProfile", "-File", "\(c.packageDir)/demo.ps1") + c.args
+else
+  c.args

@@ -1,7 +1,10 @@
 package hydraulic.url
 
 import hydraulic.diskcache.LocalDiskCache
+import hydraulic.diskcache.http.HttpStatusException
 import hydraulic.utils.os.OperatingSystemPaths
+import org.graalvm.nativeimage.ImageInfo
+import org.graalvm.nativeimage.ProcessProperties
 import picocli.CommandLine.Command
 import picocli.CommandLine.Mixin
 import picocli.CommandLine.Option
@@ -11,12 +14,13 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
 import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.io.path.exists
 
-/** Resolves and executes a URL, or executes the startup script in a local directory. */
+/** Resolves and executes a URL, or evaluates and executes a local run.pkl package. */
 @Command(
     name = "run",
-    description = ["Resolve and execute a URL or local run.zip.d directory."],
+    description = ["Resolve and execute a URL or local run.pkl package."],
     version = [VERSION],
     mixinStandardHelpOptions = true
 )
@@ -69,12 +73,7 @@ class Run(
         }
 
         val target = parseRunTarget(requireNotNull(url) { "A URL or local directory is required" })
-        val runScript = RunScriptContext(operatingSystem, architecture, target.version, nestedURLArguments())
-        val runEnvironment = runEnvironment(environment)
-        localRunScript(target.locator, windows)?.let { script ->
-            return runResolvedPath(script, arguments, windows, runEnvironment, runScript)
-        }
-        val uri = runTargetURI(parseURL(target.locator), windows)
+        val localPackage = localRunPackage(target.locator)
         val tracker = progressTracker(progress, System.err, environment, ::isStderrInteractive)
         val minimumFreeSpace = downloadPolicy.minimumFreeSpaceBytes(environment)
         val cacheConfiguration = downloadPolicy.cacheConfiguration()
@@ -84,38 +83,43 @@ class Run(
                     UserAgentHttpTransport(),
                     minimumFreeSpace
                 ) { Files.getFileStore(cacheDirectory).usableSpace }
-                URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh, transport = transport).resolve(uri).use { resolved ->
-                    return runResolvedPath(resolved.path.toAbsolutePath(), arguments, windows, runEnvironment, runScript)
+                val resolver = URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh, transport = transport)
+                val packageResource = if (localPackage == null)
+                    resolver.resolve(runTargetURI(parseURL(target.locator)))
+                else
+                    null
+                try {
+                    val packagePath = localPackage ?: packageResource!!.path.toAbsolutePath()
+                    val context = RunContext(
+                        os = operatingSystem,
+                        arch = architecture,
+                        ver = target.version,
+                        args = arguments,
+                        packageDir = packagePath.toRealPath().parent ?: error("run.pkl must have a parent directory")
+                    )
+                    val packageDefinition = evaluateRunPackage(packagePath, context)
+                    val opened = ConcurrentLinkedQueue<ResolvedURL>()
+                    try {
+                        val resolved = parallelMapOrdered(packageDefinition.urls.entries.toList()) { _, (name, value) ->
+                            resolveRunURL(resolver, parseURL(value), windows).also { opened += it }
+                                .let { name to it.path.toAbsolutePath() }
+                        }.toMap()
+                        val plan = packageDefinition.launchPlan(resolved)
+                        return runResolvedPath(plan.executable, plan.arguments, environment)
+                    } finally {
+                        opened.forEach(ResolvedURL::close)
+                    }
+                } finally {
+                    packageResource?.close()
                 }
             }
         } finally {
             (tracker as? AutoCloseable)?.close()
         }
     }
-
-    private fun nestedURLArguments(): List<String> = buildList {
-        add("--cache-dir=$cacheDirectory")
-        add("--progress=$progress")
-        add("--cache-limit=${downloadPolicy.cacheLimitGB}")
-        if (refresh)
-            add("--refresh")
-        if (noGatekeeper)
-            add("--no-gatekeeper")
-        downloadPolicy.minimumFreeSpaceMB?.let { add("--min-free-space=$it") }
-        downloadPolicy.legacyMinimumFreeSpaceGB?.let { add("--cache-free-space-limit=$it") }
-        if (downloadPolicy.skipCacheLock)
-            add("--skip-cache-lock")
-    }
 }
 
 internal data class RunTarget(val locator: String, val version: String?)
-
-internal data class RunScriptContext(
-    val operatingSystem: String,
-    val architecture: String,
-    val version: String?,
-    val urlArguments: List<String> = emptyList()
-)
 
 internal fun parseRunTarget(target: String): RunTarget {
     val suffixStart = listOf(target.indexOf('?'), target.indexOf('#')).filter { it >= 0 }.minOrNull() ?: target.length
@@ -148,29 +152,41 @@ internal fun runArchitecture(architecture: String = System.getProperty("os.arch"
         else -> architecture.lowercase(Locale.ROOT)
     }
 
-internal fun runEnvironment(inherited: Map<String, String>): Map<String, String> = inherited.toMutableMap().apply {
-    remove("OS")
-    remove("ARCH")
-    remove("VER")
-}
-
-internal fun localRunScript(target: String, windows: Boolean): Path? {
+internal fun localRunPackage(target: String): Path? {
     val directory = runCatching { Path.of(target) }.getOrNull()?.takeIf(Files::isDirectory) ?: return null
-    val script = directory.resolve(if (windows) "run.ps1" else "run.sh").toAbsolutePath()
-    require(Files.isRegularFile(script)) { "Local run directory does not contain ${script.fileName}: $directory" }
-    return script
+    val packagePath = directory.resolve("run.pkl").toAbsolutePath()
+    require(Files.isRegularFile(packagePath)) { "Local run directory does not contain run.pkl: $directory" }
+    return packagePath
 }
 
-internal fun runTargetURI(uri: URI, windows: Boolean): URI {
+internal fun runTargetURI(uri: URI): URI {
     val path = uri.rawPath.orEmpty()
     if (path.isNotEmpty() && !path.endsWith('/'))
         return uri
-    val suffix = "run.zip/" + if (windows) "run.ps1" else "run.sh"
+    val suffix = "run.zip/run.pkl"
     val text = uri.toASCIIString()
     val delimiter = listOf(text.indexOf('?'), text.indexOf('#')).filter { it >= 0 }.minOrNull() ?: text.length
     val base = text.substring(0, delimiter)
     val tail = text.substring(delimiter)
     return URI(base + (if (base.endsWith('/')) "" else "/") + suffix + tail)
+}
+
+/** On Windows, executable URL paths may omit the conventional .exe suffix. */
+internal fun resolveRunURL(resolver: URLResolver, uri: URI, windows: Boolean): ResolvedURL {
+    try {
+        return resolver.resolve(uri)
+    } catch (e: Exception) {
+        if (!windows || uri.rawPath.endsWith(".exe", ignoreCase = true) ||
+            e !is MissingArchiveMemberException && (e !is HttpStatusException || e.statusCode != 404))
+            throw e
+    }
+    return resolver.resolve(uri.withExecutableSuffix())
+}
+
+private fun URI.withExecutableSuffix(): URI {
+    val text = toASCIIString()
+    val delimiter = listOf(text.indexOf('?'), text.indexOf('#')).filter { it >= 0 }.minOrNull() ?: text.length
+    return URI(text.substring(0, delimiter) + ".exe" + text.substring(delimiter))
 }
 
 internal fun ensureHardLink(source: Path, target: Path): Boolean {
@@ -188,60 +204,8 @@ internal fun ensureHardLink(source: Path, target: Path): Boolean {
 internal fun runResolvedPath(
     path: Path,
     arguments: List<String>,
-    windows: Boolean,
-    environment: Map<String, String> = System.getenv(),
-    runScript: RunScriptContext? = null
-): Int {
-    val command = when {
-        runScript != null && windows && path.fileName.toString().endsWith(".ps1", ignoreCase = true) ->
-            listOf("powershell.exe", "-NoProfile", "-Command", powerShellRunWrapper(path, arguments, runScript))
-        runScript != null && !windows && path.fileName.toString() == "run.sh" ->
-            listOf("sh", "-c", posixRunWrapper(path, runScript), path.toString()) + arguments
-        windows && path.fileName.toString().endsWith(".ps1", ignoreCase = true) ->
-            listOf("powershell.exe", "-NoProfile", "-File", path.toString()) + arguments
-        else -> listOf(path.toString()) + arguments
-    }
-    return runProcess(command, environment)
-}
-
-internal fun posixRunWrapper(path: Path, context: RunScriptContext): String = buildString {
-    appendLine("set -e")
-    appendLine(posixShellAssignment("OS", context.operatingSystem))
-    appendLine(posixShellAssignment("ARCH", context.architecture))
-    context.version?.let { appendLine(posixShellAssignment("VER", it)) }
-    appendLine("url() {")
-    append("  command url")
-    context.urlArguments.forEach {
-        append(' ')
-        append(posixShellQuote(it))
-    }
-    appendLine(" \"${'$'}@\"")
-    appendLine("}")
-    append(". ")
-    append(posixShellQuote(path.toString()))
-}
-
-internal fun powerShellRunWrapper(path: Path, arguments: List<String>, context: RunScriptContext): String = buildString {
-    appendLine("${'$'}ErrorActionPreference = 'Stop'")
-    appendLine("${'$'}OS = ${powerShellQuote(context.operatingSystem)}")
-    appendLine("${'$'}ARCH = ${powerShellQuote(context.architecture)}")
-    context.version?.let { appendLine("${'$'}VER = ${powerShellQuote(it)}") }
-    appendLine("${'$'}runUrlCommand = (Get-Command url -CommandType Application).Source")
-    append("function url { & ${'$'}runUrlCommand")
-    context.urlArguments.forEach {
-        append(' ')
-        append(powerShellQuote(it))
-    }
-    appendLine(" @args }")
-    append(". ")
-    append(powerShellQuote(path.toString()))
-    arguments.forEach {
-        append(' ')
-        append(powerShellQuote(it))
-    }
-}
-
-internal fun powerShellQuote(value: String): String = "'${value.replace("'", "''")}'"
+    environment: Map<String, String> = System.getenv()
+): Int = runProcess(listOf(path.toString()) + arguments, environment)
 
 private fun runProcess(command: List<String>, environment: Map<String, String>): Int =
     ProcessBuilder(command).apply {
@@ -250,9 +214,13 @@ private fun runProcess(command: List<String>, environment: Map<String, String>):
         inheritIO()
     }.start().waitFor()
 
-private fun currentExecutablePath(): Path = ProcessHandle.current().info().command()
-    .map(Path::of)
-    .orElseThrow { IllegalStateException("Cannot locate the running executable") }
+private fun currentExecutablePath(): Path = Path.of(currentExecutableName())
+
+internal fun currentExecutableName(): String = if (ImageInfo.inImageRuntimeCode())
+    ProcessProperties.getExecutableName()
+else
+    System.getProperty("sun.java.command")?.substringBefore(' ')
+        ?: throw IllegalStateException("Cannot locate the running executable")
 
 fun main(args: Array<String>) {
     val exitCode = commandLine("run").execute(*args)

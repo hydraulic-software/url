@@ -101,37 +101,35 @@ separators. An `=` inside a URL path or query string remains part of the URL.
 
 ## Running programs
 
-`run foobar.com --help` is equivalent to:
-
-```shell
-$ `url https://foobar.com/run.zip/run.sh` --help
-```
-
-On Windows it will use `run.ps1` in the zip instead.
+`run foobar.com --help` resolves `https://foobar.com/run.zip/run.pkl`,
+evaluates its launch plan, and passes `--help` to the resulting executable.
+The Pkl module describes which URLs to resolve and the final executable to
+launch, so the package can select the right binary for each platform without a
+shell wrapper.
 
 Because of the caching, this means the program at `foobar.com` will keep itself up to date automatically.
 
 During development, pass a local launcher directory to bypass URL resolution
-and the cache. `run` selects `run.sh` on Unix-like systems and `run.ps1` on
-Windows, and forwards all remaining arguments:
+and the cache. The directory must contain `run.pkl`, and `run` forwards all
+remaining arguments:
 
 ```shell
 $ run ./run.zip.d --help
 ```
 
-`run.sh` is sourced by a POSIX shell wrapper with `errexit` enabled. The
-wrapper provides unexported `OS`, `ARCH`, and optional `VER` variables, plus a
-`url` function that inherits flags such as `--refresh`, `--progress`, and
-`--cache-dir` from `run`. These launcher-only values do not leak into the final
-program unless the runscript explicitly exports them.
+The package imports `run:context` to access `os`, `arch`, nullable `ver`, `args`,
+`packageDir`, and the paths resolved from its `urls` object. URL resolution is
+performed before the final command is evaluated. On Windows, executable URLs
+may omit their final `.exe` suffix.
 
 `run.zip` can contain anything but it's conventional and strongly recommended that:
 
-* It be small. This is a stub script, not the full program.
-* It use the normalized `OS` and `ARCH` environment variables to select the right program for the host, then use `url` to download it.
-* The downloaded program is run from inside the disk cache, not copied elsewhere or "installed".
-* It respect `VER` when set. A suffix such as `run example.com/tool@1.2.3` removes the suffix from the resolved URL and invokes the runscript with `VER=1.2.3`.
-* It is silent by default. If the `RUN_LOG` environment variable is set, it can emit logs to stderr.
+* It keep `run.pkl` small. The package should describe the launch rather than
+  contain the downloaded program.
+* It use `url` values with archive members when a program lives inside an
+  archive.
+* It run downloaded programs from inside the disk cache, not copy them
+  elsewhere or install them.
 
 ## Security
 

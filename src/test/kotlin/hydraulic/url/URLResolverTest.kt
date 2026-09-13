@@ -387,6 +387,22 @@ class URLResolverTest {
     }
 
     @Test
+    fun `archive member hash locks authenticate the complete archive`() = withServer { server ->
+        val zip = zipOf("tool-1.0/bin/tool" to "archive member")
+        server.createContext("/") {
+            if (it.requestURI.path == "/tool.zip") it.respond(zip) else it.respond404()
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache).resolve(server.uri("/tool.zip/bin/tool#sha256=${zip.sha256()}"))
+                .use { resolved -> assertEquals("archive member", resolved.path.readText()) }
+            assertFailsWith<IllegalArgumentException> {
+                URLResolver(cache).resolve(server.uri("/tool.zip/bin/tool#sha256=${"0".repeat(64)}"))
+            }
+        }
+    }
+
+    @Test
     fun `trailing slash resolves to archive root with a single wrapper removed`() = withServer { server ->
         val requestedPaths = mutableListOf<String>()
         val zip = zipOf("tool-1.0/bin/tool" to "archive member")
@@ -918,14 +934,14 @@ class URLResolverTest {
     }
 
     @Test
-    fun `run directory convention preserves URL suffixes and selects platform script`() {
-        assertEquals(URI("https://example.com/run.zip/run.sh"), runTargetURI(URI("https://example.com"), false))
+    fun `run directory convention preserves URL suffixes and selects the Pkl package`() {
+        assertEquals(URI("https://example.com/run.zip/run.pkl"), runTargetURI(URI("https://example.com")))
         assertEquals(
-            URI("https://example.com/tools/run.zip/run.sh?channel=beta#sha256=abc"),
-            runTargetURI(URI("https://example.com/tools/?channel=beta#sha256=abc"), false)
+            URI("https://example.com/tools/run.zip/run.pkl?channel=beta#sha256=abc"),
+            runTargetURI(URI("https://example.com/tools/?channel=beta#sha256=abc"))
         )
-        assertEquals(URI("https://example.com/tools/run.zip/run.ps1"), runTargetURI(URI("https://example.com/tools/"), true))
-        assertEquals(URI("https://example.com/tool.sh"), runTargetURI(URI("https://example.com/tool.sh"), false))
+        assertEquals(URI("https://example.com/tools/run.zip/run.pkl"), runTargetURI(URI("https://example.com/tools/")))
+        assertEquals(URI("https://example.com/tool.pkl"), runTargetURI(URI("https://example.com/tool.pkl")))
     }
 
     @Test
@@ -955,100 +971,163 @@ class URLResolverTest {
     }
 
     @Test
-    fun `runscript process environment removes contract variables`() {
-        val inherited = mapOf("PATH" to "/bin", "OS" to "wrong", "ARCH" to "wrong", "VER" to "stale")
-        assertEquals(mapOf("PATH" to "/bin"), runEnvironment(inherited))
-    }
-
-    @Test
-    fun `run selects the platform script from a local directory`() {
+    fun `run selects the Pkl package from a local directory`() {
         val directory = (tempDir / "run.zip.d").createDirectories()
-        val unixScript = directory / "run.sh"
-        val windowsScript = directory / "run.ps1"
-        unixScript.writeText("exit 0\n")
-        windowsScript.writeText("exit 0\n")
+        val pkl = directory / "run.pkl"
+        pkl.writeText("executable = \"/bin/true\"\narguments = List()\n")
 
-        assertEquals(unixScript.toAbsolutePath(), localRunScript(directory.toString(), false))
-        assertEquals(windowsScript.toAbsolutePath(), localRunScript(directory.toString(), true))
-        assertEquals(null, localRunScript((tempDir / "missing").toString(), false))
+        assertEquals(pkl.toAbsolutePath(), localRunPackage(directory.toString()))
+        assertEquals(null, localRunPackage((tempDir / "missing").toString()))
     }
 
     @Test
-    fun `run executes a non-executable local run script with contract variables and all arguments`() {
+    fun `run evaluates a local Pkl package and passes its arguments`() {
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
             return
         val directory = (tempDir / "run.zip.d").createDirectories()
         val output = tempDir / "local-arguments"
-        (directory / "run.sh").writeText(
+        val executable = directory / "tool.sh"
+        executable.writeText("#!/bin/sh\nprintf '%s\\n' \"${'$'}@\" > '$output'\n")
+        executable.toFile().setExecutable(true)
+        (directory / "run.pkl").writeText(
             """
-            printf '%s\n' "${'$'}OS" "${'$'}ARCH" "${'$'}{VER-unset}" "${'$'}@" > '${output}'
-            sh -c 'printf "%s\n" "${'$'}{OS-unset}" "${'$'}{ARCH-unset}" "${'$'}{VER-unset}"' >> '${output}'
+            import "run:context" as c
+            urls {}
+            executable = "\(c.packageDir)/tool.sh"
+            arguments = c.args
             """.trimIndent()
         )
         val run = Run(
             executablePath = { tempDir / "run" },
             windows = false,
-            environment = System.getenv() + ("VER" to "stale"),
             operatingSystem = "linux",
             architecture = "arm64"
         )
 
         val exitCode = CommandLine(run).setStopAtPositional(true)
-            .execute("${directory}@v7-beta", "--help", "two words")
+            .execute(directory.toString(), "--help", "two words")
 
         assertEquals(0, exitCode)
-        assertEquals("linux\narm64\nv7-beta\n--help\ntwo words\nunset\nunset\nunset\n", output.readText())
+        assertEquals("--help\ntwo words\n", output.readText())
     }
 
     @Test
-    fun `runscript exits on the first failed command by default`() {
-        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
-            return
+    fun `run resolves named Pkl URLs before evaluating the launch command`() = withServer { server ->
         val directory = (tempDir / "run.zip.d").createDirectories()
-        val reached = tempDir / "reached"
-        (directory / "run.sh").writeText("false\nprintf reached > '${reached}'\n")
-        val run = Run(executablePath = { tempDir / "run" }, windows = false)
-
-        assertEquals(1, CommandLine(run).setStopAtPositional(true).execute(directory.toString()))
-        assertFalse(Files.exists(reached))
-    }
-
-    @Test
-    fun `runscript url function inherits resolver options and preserves its arguments`() {
-        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
-            return
-        val directory = (tempDir / "run.zip.d").createDirectories()
-        val bin = (tempDir / "bin").createDirectories()
-        val output = tempDir / "url-arguments"
-        (directory / "run.sh").writeText("url child=example.com/file > /dev/null\n")
-        (bin / "url").apply {
-            writeText("#!/bin/sh\nprintf '%s\\n' \"${'$'}@\" > '${output}'\n")
-            toFile().setExecutable(true)
+        val output = tempDir / "resolved-output"
+        server.createContext("/tool") {
+            it.respond("#!/bin/sh\nprintf '%s\\n' \"${'$'}@\" > \"${'$'}1\"\n".toByteArray())
         }
+        (directory / "run.pkl").writeText(
+            """
+            import "run:context" as c
+            urls {
+              tool = "${server.uri("/tool")}"
+            }
+            executable = c.resolved.tool
+            arguments = c.args
+            """.trimIndent()
+        )
         val run = Run(
             executablePath = { tempDir / "run" },
             windows = false,
-            environment = System.getenv() + ("PATH" to "$bin:${System.getenv("PATH")}"),
             operatingSystem = "linux",
-            architecture = "arm64"
+            architecture = "x86_64"
         )
-        val cache = tempDir / "custom-cache"
-
+        val cache = (tempDir / "run-cache").createDirectories()
         val exitCode = CommandLine(run).setStopAtPositional(true).execute(
             "--cache-dir", cache.toString(),
-            "--refresh",
-            "--progress=plain",
-            "--min-free-space=12",
-            "--cache-limit=2.5",
-            directory.toString()
+            "--progress=never",
+            directory.toString(),
+            output.toString()
         )
 
         assertEquals(0, exitCode)
-        assertEquals(
-            "--cache-dir=$cache\n--progress=plain\n--cache-limit=2.5\n--refresh\n" +
-                "--min-free-space=12\nchild=example.com/file\n",
-            output.readText()
+        assertEquals(output.toString() + "\n", output.readText())
+    }
+
+    @Test
+    fun `run adds an omitted exe suffix on Windows`() = withServer { server ->
+        val zip = zipOf("tool-1.0/bin/tool.exe" to "windows executable")
+        server.createContext("/") { exchange ->
+            if (exchange.requestURI.path == "/tool.zip")
+                exchange.respond(zip)
+            else
+                exchange.respond404()
+        }
+
+        makeCache().use { cache ->
+            val resolver = URLResolver(cache)
+            resolveRunURL(resolver, server.uri("/tool.zip/bin/tool"), windows = true).use { resolved ->
+                assertEquals("tool.exe", resolved.path.fileName.toString())
+                assertEquals("windows executable", resolved.path.readText())
+            }
+            assertFailsWith<IllegalArgumentException> {
+                resolveRunURL(resolver, server.uri("/tool.zip/bin/tool"), windows = false)
+            }
+        }
+    }
+
+    @Test
+    fun `cel verifier Pkl produces portable launch plans`() {
+        val packageFile = Path.of("site/cel-verifier/run.zip.d/run.pkl").toAbsolutePath()
+        val packageDir = packageFile.parent
+        val java = tempDir / "java"
+        val verifier = tempDir / "verifier.jar"
+
+        val macPackage = evaluateRunPackage(
+            packageFile,
+            RunContext("macos", "arm64", null, listOf("input.cel"), packageDir)
         )
+        assertTrue(macPackage.urls.getValue("java").contains(
+            "graalvm-jdk-25_macos-aarch64_bin.tar.gz/Contents/Home/bin/java#sha256="
+        ))
+        assertTrue(macPackage.urls.getValue("verifier").endsWith(
+            "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
+        ))
+        val macPlan = macPackage.launchPlan(mapOf("java" to java, "verifier" to verifier))
+        assertEquals(java, macPlan.executable)
+        assertEquals(
+            listOf(
+                "--sun-misc-unsafe-memory-access=allow",
+                "--enable-native-access=ALL-UNNAMED",
+                "-jar",
+                verifier.toString(),
+                "input.cel"
+            ),
+            macPlan.arguments
+        )
+
+        val windowsPackage = evaluateRunPackage(
+            packageFile,
+            RunContext("windows", "x86_64", "0.14.0", emptyList(), packageDir)
+        )
+        assertTrue(windowsPackage.urls.getValue("java").contains(
+            "graalvm-jdk-25_windows-x64_bin.zip/bin/java#sha256="
+        ))
+        assertTrue(windowsPackage.urls.getValue("verifier").endsWith(
+            "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
+        ))
+        val javaExe = tempDir / "java.exe"
+        val windowsPlan = windowsPackage.launchPlan(mapOf("java" to javaExe, "verifier" to verifier))
+        assertEquals(javaExe, windowsPlan.executable)
+        assertEquals(
+            listOf(
+                "--sun-misc-unsafe-memory-access=allow",
+                "--enable-native-access=ALL-UNNAMED",
+                "-jar",
+                verifier.toString()
+            ),
+            windowsPlan.arguments
+        )
+
+        val unlockedPackage = evaluateRunPackage(
+            packageFile,
+            RunContext("windows", "x86_64", "1.2.3", emptyList(), packageDir)
+        )
+        assertTrue(unlockedPackage.urls.getValue("verifier").endsWith(
+            "/1.2.3/verifier-cli-1.2.3.jar"
+        ))
     }
 
     @Test
@@ -1094,7 +1173,7 @@ class URLResolverTest {
         script.writeText("#!/bin/sh\nprintf '%s\\n' \"${'$'}@\" > '${output}'\n")
         script.toFile().setExecutable(true)
 
-        assertEquals(0, runResolvedPath(script, listOf("--help", "two words"), false))
+        assertEquals(0, runResolvedPath(script, listOf("--help", "two words")))
         assertEquals("--help\ntwo words\n", output.readText())
     }
 
