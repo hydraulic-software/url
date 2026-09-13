@@ -241,32 +241,45 @@ class URLResolverTest {
     }
 
     @Test
-    fun `parallel progress uses stable progress4j subreports`() {
+    fun `parallel progress aggregates child sizes into the parent report`() {
         val reports = mutableListOf<dev.progress4j.api.ProgressReport>()
-        val progress = ParallelURLProgress(listOf("first", "second")) { reports += it }
+        val progress = ParallelURLProgress(
+            listOf("https://example.com/first", "http://example.com/second")
+        ) { reports += it }
 
-        progress.tracker(1)!!.report(dev.progress4j.api.ProgressReport.create("Downloading", 20, 5))
-        progress.tracker(0)!!.report(dev.progress4j.api.ProgressReport.create("Downloading", 10, 10))
+        progress.tracker(1)!!.report(dev.progress4j.api.ProgressReport.create(
+            "Downloading", 20, 5, dev.progress4j.api.ProgressReport.Units.BYTES
+        ))
+        progress.tracker(0)!!.report(dev.progress4j.api.ProgressReport.create(
+            "Downloading", 10, 10, dev.progress4j.api.ProgressReport.Units.BYTES
+        ))
+
+        val downloading = reports.last()
+        assertEquals(30, downloading.expectedTotal)
+        assertEquals(15, downloading.completed)
+        assertEquals(dev.progress4j.api.ProgressReport.Units.BYTES, downloading.units)
+        assertEquals(listOf("first", "second"), downloading.subReports.map { it!!.message })
+
         progress.complete(0)
         progress.complete(1)
 
         val final = reports.last()
         assertEquals("Resolving URLs", final.message)
-        assertEquals(2, final.expectedTotal)
-        assertEquals(2, final.completed)
+        assertEquals(30, final.expectedTotal)
+        assertEquals(30, final.completed)
         assertEquals(listOf("first", "second"), final.subReports.map { it!!.message })
     }
 
     @Test
     fun `single URL progress is reported directly without subreports`() {
         val reports = mutableListOf<dev.progress4j.api.ProgressReport>()
-        val progress = ParallelURLProgress(listOf("only")) { reports += it }
+        val progress = ParallelURLProgress(listOf("https://example.com/download/tool.zip")) { reports += it }
 
         progress.tracker(0)!!.report(dev.progress4j.api.ProgressReport.create("Downloading", 20, 5))
         progress.complete(0)
 
         assertEquals(1, reports.size)
-        assertEquals("Downloading", reports.single().message)
+        assertEquals("tool.zip", reports.single().message)
         assertTrue(reports.single().subReports.isEmpty())
     }
 

@@ -29,6 +29,7 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReferenceArray
 
 /** Resolves an HTTP(S) URL to a local path, downloading and revalidating it through a shared disk cache. */
 @Command(
@@ -211,11 +212,16 @@ internal fun <T, R> parallelMapOrdered(
 internal class ParallelURLProgress(inputs: List<String>, tracker: ProgressReport.Tracker?) {
     private val labels = inputs.map(::progressLabel)
     private val directTracker = tracker.takeIf { inputs.size == 1 }
-    private val combiner = tracker?.takeIf { inputs.size > 1 }?.let { ProgressStreamCombiner(false, it) }
+    private val combiner = tracker?.takeIf { inputs.size > 1 }?.let { ProgressStreamCombiner(true, it) }
     private val completed = AtomicInteger()
+    private val latestReports = AtomicReferenceArray<ProgressReport>(inputs.size)
     private val base = ProgressReport.create("Resolving URLs", inputs.size)
-    private val children = labels.map { label ->
-        combiner?.addSubTask()?.also { it.report(ProgressReport.createIndeterminate(label)) }
+    private val children = labels.mapIndexed { index, label ->
+        combiner?.addSubTask()?.also {
+            val initial = ProgressReport.createIndeterminate(label)
+            latestReports.set(index, initial)
+            it.report(initial)
+        }
     }
 
     init {
@@ -225,13 +231,17 @@ internal class ParallelURLProgress(inputs: List<String>, tracker: ProgressReport
     fun tracker(index: Int): ProgressReport.Tracker? {
         if (directTracker != null) {
             require(index == 0)
-            return directTracker
+            val label = labels.single()
+            return ProgressReport.Tracker { progress ->
+                directTracker.report(progress.withMessage(label))
+            }
         }
         val child = children[index] ?: return null
         val label = labels[index]
         return ProgressReport.Tracker { progress ->
-            val detail = progress.message?.takeIf(String::isNotBlank)
-            child.report(progress.withMessage(if (detail == null) label else "$label — $detail"))
+            val report = progress.withMessage(label)
+            latestReports.set(index, report)
+            child.report(report)
         }
     }
 
@@ -241,12 +251,25 @@ internal class ParallelURLProgress(inputs: List<String>, tracker: ProgressReport
             return
         }
         val child = children[index] ?: return
-        child.report(ProgressReport.create(labels[index], 1, 1))
+        val label = labels[index]
+        val latest = latestReports.get(index) ?: ProgressReport.createIndeterminate(label)
+        child.report(latest.withMessage(label).withCompleted(latest.expectedTotal))
         combiner!!.report(base.withCompleted(completed.incrementAndGet().toLong()))
     }
 }
 
-private fun progressLabel(input: String): String = input.take(80).let { if (it.length == input.length) it else "$it…" }
+private fun progressLabel(input: String): String {
+    val withoutScheme = if (URL_SCHEME.matchesAt(input, 0)) input.substringAfter("://") else input
+    val fileName = runCatching { parseURL(input).path }
+        .getOrNull()
+        ?.takeIf { it.isNotEmpty() && !it.endsWith('/') }
+        ?.substringAfterLast('/')
+        ?.takeIf(String::isNotEmpty)
+    val label = fileName ?: withoutScheme.take(80).let {
+        if (it.length == withoutScheme.length) it else "$it…"
+    }
+    return label
+}
 
 internal fun progressTracker(
     mode: String,
