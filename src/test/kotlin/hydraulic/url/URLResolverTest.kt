@@ -1343,6 +1343,26 @@ class URLResolverTest {
     }
 
     @Test
+    fun `streaming extraction accepts tar root directory entry`() {
+        val archive = ByteArrayOutputStream().use { bytes ->
+            TarArchiveOutputStream(bytes).use { tar ->
+                tar.putArchiveEntry(TarArchiveEntry("./"))
+                tar.closeArchiveEntry()
+                val contents = "payload".toByteArray()
+                tar.putArchiveEntry(TarArchiveEntry("./file").apply { size = contents.size.toLong() })
+                tar.write(contents)
+                tar.closeArchiveEntry()
+            }
+            bytes.toByteArray()
+        }
+        val destination = tempDir / "streamed"
+
+        extractStreamingTar(ByteArrayInputStream(archive), destination)
+
+        assertEquals("payload", (destination / "file").readText())
+    }
+
+    @Test
     fun `local extraction rejects writes through chained archive symlinks`() {
         val archive = tempDir / "attack.tar.gz"
         archive.writeBytes(maliciousSymlinkTarGz())

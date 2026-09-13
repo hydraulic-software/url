@@ -48,12 +48,25 @@ private val ZSTD_MAGIC = byteArrayOf(0x28, 0xb5.toByte(), 0x2f, 0xfd.toByte())
 
 private fun extractTarEntry(input: InputStream, entry: TarArchiveEntry, state: StreamingExtractionState) {
     val root = state.root
-    val relative = Path.of(entry.name.removePrefix("./"))
+    // Tar commonly emits a directory entry named "./" when archiving the
+    // contents of a directory (for example, `tar -cf ../archive.tar .`).
+    // Removing the prefix leaves an empty path, which Path.of rejects as an
+    // archive entry even though it simply denotes the extraction root.
+    val entryPath = entry.name.removePrefix("./")
+    if (entryPath.isEmpty()) {
+        require(entry.isDirectory) { "Archive file entry cannot replace its extraction root: ${entry.name}" }
+        root.createDirectories()
+        return
+    }
+    val relative = Path.of(entryPath)
     require(relative.root == null && relative.normalize() == relative && relative.toString().isNotBlank()) {
         "Archive entry has an unsafe path: ${entry.name}"
     }
     val logicalTarget = root.resolve(relative).normalize()
     require(logicalTarget.startsWith(root)) { "Archive entry escapes its extraction root: ${entry.name}" }
+    require(logicalTarget != root || entry.isDirectory) {
+        "Archive file entry cannot replace its extraction root: ${entry.name}"
+    }
     if (entry.isDirectory) {
         val target = state.prepareDirectory(logicalTarget, entry.name)
         target.createDirectories()
