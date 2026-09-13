@@ -28,13 +28,20 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 
-/** Resolves ordinary HTTP resources and paths within remotely hosted archives. */
+/**
+ * Resolves ordinary HTTP resources and paths within remotely hosted archives.
+ *
+ * An input is first treated as an ordinary resource. A 404 is the signal to
+ * interpret an archive-shaped path as an archive member instead. Archive
+ * members are cached as extracted directories, while ordinary resources use
+ * the shared HTTP resource cache.
+ */
 class URLResolver private constructor(
     cache: DiskCache,
     private val progressTracker: ProgressReport.Tracker?,
     private val gatekeeper: Boolean = true,
     private val transport: HttpTransport = UserAgentHttpTransport(),
-    refresh: Boolean,
+    private val refresh: Boolean,
     private val retryDamagedCacheEntry: Boolean
 ) {
     constructor(
@@ -59,6 +66,8 @@ class URLResolver private constructor(
         } catch (e: DamagedCacheEntryException) {
             if (!retryDamagedCacheEntry)
                 throw IOException("Cache entry is still incomplete after rebuilding it", e)
+            // A cache entry can disappear between lookup and use. Retry the
+            // whole resolution with a cache view that forces replacement.
             return URLResolver(
                 ForceRebuildDiskCache(sourceCache),
                 progressTracker,
@@ -72,13 +81,18 @@ class URLResolver private constructor(
 
     private fun resolveOnce(uri: URI, cacheIdentity: URI): ResolvedURL {
         val expectedHash = sha256Lock(uri)
-        val mayResolveAsArchive = parseArchiveURL(uri.withoutFragment())?.let {
-            it.member.isNotEmpty() || uri.rawPath.endsWith('/')
+        val uriWithoutFragment = uri.withoutFragment()
+        val cacheIdentityWithoutFragment = cacheIdentity.withoutFragment()
+        val archiveHashApplies = parseArchiveURL(uriWithoutFragment)?.let {
+            it.member.isNotEmpty() || uriWithoutFragment.rawPath.endsWith('/')
         } == true
-        val resolution = resolveWithoutHashLock(
-            uri.withoutFragment(),
-            cacheIdentity.withoutFragment(),
-            archiveHash = expectedHash.takeIf { mayResolveAsArchive }
+        // A lock on an archive member authenticates the innermost archive
+        // bytes before extraction. For an ordinary response, the final file is
+        // hashed below after the ordinary-resource/archive decision is made.
+        val resolution = resolveResourceOrArchive(
+            uriWithoutFragment,
+            cacheIdentityWithoutFragment,
+            expectedArchiveHash = expectedHash.takeIf { archiveHashApplies }
         )
         val resolved = resolution.resource
         try {
@@ -102,11 +116,17 @@ class URLResolver private constructor(
         }
     }
 
-    private fun resolveWithoutHashLock(uri: URI, cacheIdentity: URI, archiveHash: String? = null): Resolution {
+    private fun resolveResourceOrArchive(
+        uri: URI,
+        cacheIdentity: URI,
+        expectedArchiveHash: String? = null
+    ): Resolution {
         val archive = parseArchiveURL(uri)
         val identityArchive = parseArchiveURL(cacheIdentity)
         if (archive != null && archive.member.isEmpty() && uri.rawPath.endsWith('/'))
-            return resolveArchive(archive, identityArchive ?: invalidArchiveIdentity(), archiveHash)
+            return resolveArchive(archive, identityArchive ?: invalidArchiveIdentity(), expectedArchiveHash)
+        // A URL that looks like an archive member can still be an ordinary
+        // resource, so preserve ordinary HTTP resolution as the first attempt.
         try {
             return Resolution(resolveResource(uri, cacheIdentity).asSingleFile())
         } catch (e: HttpStatusException) {
@@ -117,7 +137,7 @@ class URLResolver private constructor(
         return resolveArchive(
             archive ?: throw HttpStatusException(uri, 404),
             identityArchive ?: invalidArchiveIdentity(),
-            archiveHash
+            expectedArchiveHash
         )
     }
 
@@ -127,6 +147,8 @@ class URLResolver private constructor(
         val policy = file.hashbangCachePolicy() ?: return entry
         if (entry.metadata[HTTP_CACHE_CONTROL_METADATA] == policy)
             return entry
+        // The policy is encoded in the downloaded file, so attach it to the
+        // HTTP cache entry after the resource cache has produced the body.
         val oldDirectory = entry.directory
         val metadata = entry.metadata + (HTTP_CACHE_CONTROL_METADATA to policy)
         entry.close()
@@ -145,8 +167,15 @@ class URLResolver private constructor(
         }
     }
 
-    private fun resolveArchive(archive: ArchiveURL, identityArchive: ArchiveURL, archiveHash: String? = null): Resolution {
-        if (archiveHash == null && archive.archiveURI.isRemoteTarball() && parseArchiveURL(archive.archiveURI, 1) == null) {
+    private fun resolveArchive(
+        archive: ArchiveURL,
+        identityArchive: ArchiveURL,
+        expectedArchiveHash: String? = null
+    ): Resolution {
+        // A top-level remote tarball can be extracted as its response streams
+        // in. A normal downloaded file is required when hashing the archive or
+        // when resolving nested archives.
+        if (expectedArchiveHash == null && archive.archiveURI.isRemoteTarball() && parseArchiveURL(archive.archiveURI, 1) == null) {
             if (!cache.has(HttpResourceCache.cacheKey(identityArchive.archiveURI)))
                 return Resolution(resolveStreamedArchive(archive, identityArchive))
             val downloaded = resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
@@ -158,13 +187,13 @@ class URLResolver private constructor(
         }
         val downloaded = resolveArchiveSource(archive, identityArchive)
         try {
-            archiveHash?.let { expected ->
+            expectedArchiveHash?.let { expected ->
                 val actual = downloaded.path.sha256()
                 require(actual.equals(expected, ignoreCase = true)) {
                     "SHA-256 mismatch: expected $expected but resolved archive has $actual"
                 }
             }
-            return Resolution(resolveExtractedArchive(archive, downloaded.path), archiveHash != null)
+            return Resolution(resolveExtractedArchive(archive, downloaded.path), expectedArchiveHash != null)
         } finally {
             downloaded.close()
         }
@@ -181,14 +210,18 @@ class URLResolver private constructor(
     private fun resolveStreamedArchive(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
         val key = streamedArchiveCacheKey(identityArchive.archiveURI)
         val existing = cache.lookup(key)
-        if (existing != null && streamedArchiveIsFresh(existing.metadata))
+        // This path bypasses HttpResourceCache, so refresh must bypass both the
+        // extracted entry's freshness check and its conditional request headers.
+        if (!refresh && existing != null && streamedArchiveIsFresh(existing.metadata))
             return selectArchiveMember(archive, existing)
         val previousMetadata = existing?.metadata.orEmpty()
         val previousDirectory = existing?.directory
         existing?.close()
         val requestHeaders = buildMap {
-            previousMetadata[STREAM_ETAG]?.let { put("If-None-Match", it) }
-            previousMetadata[STREAM_LAST_MODIFIED]?.let { put("If-Modified-Since", it) }
+            if (!refresh) {
+                previousMetadata[STREAM_ETAG]?.let { put("If-None-Match", it) }
+                previousMetadata[STREAM_LAST_MODIFIED]?.let { put("If-Modified-Since", it) }
+            }
         }
         val extracted = cache.getAndCustomizeEntry(key, rerun = previousDirectory != null) { destination ->
             val response = transport.get(archive.archiveURI, requestHeaders)
@@ -225,6 +258,9 @@ class URLResolver private constructor(
         } catch (e: IOException) {
             damagedCacheEntry(extracted, "extracted archive directory disappeared", e)
         }
+        // Check the normalized path before resolving symlinks, then check the
+        // real path as well so archive members cannot escape through either
+        // spelling or filesystem links.
         val selected = archive.member.fold(extractedRoot) { path, component -> path.resolve(component) }.normalize()
         if (!selected.startsWith(extractedRoot) || !selected.exists()) {
             extracted.close()
@@ -246,6 +282,8 @@ class URLResolver private constructor(
         } catch (e: HttpStatusException) {
             if (e.statusCode != 404)
                 throw e
+            // A missing inner archive may be a member of an outer archive. The
+            // recursive call then resolves and extracts that outer source.
             val outerArchive = parseArchiveURL(archive.archiveURI, 1) ?: throw e
             val identityOuterArchive = parseArchiveURL(identityArchive.archiveURI, 1) ?: invalidArchiveIdentity()
             return resolveArchive(outerArchive, identityOuterArchive).resource
@@ -276,6 +314,7 @@ class URLResolver private constructor(
     }
 }
 
+/** The resolved resource and whether an archive hash lock was checked upstream. */
 private data class Resolution(val resource: ResolvedURL, val archiveHashVerified: Boolean = false)
 
 internal class MissingArchiveMemberException(message: String) : IllegalArgumentException(message)
@@ -473,12 +512,16 @@ private const val STREAM_RESPONSE_TIME = "stream.response-time"
 private const val STREAM_CACHE_CONTROL = "stream.cache-control"
 private const val STREAM_ETAG = "stream.etag"
 private const val STREAM_LAST_MODIFIED = "stream.last-modified"
+private const val STREAM_AGE = "stream.age"
 
 private fun streamedArchiveMetadata(
     response: HttpTransport.Response,
     previous: Map<String, String>
 ): Map<String, String> = buildMap {
-    putAll(previous)
+    // A 200 describes a replacement representation; only 304 may inherit
+    // metadata that the response did not repeat.
+    if (response.statusCode == 304)
+        putAll(previous)
     put(STREAM_RESPONSE_TIME, Instant.now().toEpochMilli().toString())
     fun replaceFromHeader(name: String, key: String) {
         response.header(name)?.let { put(key, it) }
@@ -486,6 +529,7 @@ private fun streamedArchiveMetadata(
     replaceFromHeader("cache-control", STREAM_CACHE_CONTROL)
     replaceFromHeader("etag", STREAM_ETAG)
     replaceFromHeader("last-modified", STREAM_LAST_MODIFIED)
+    replaceFromHeader("age", STREAM_AGE)
 }
 
 private fun streamedArchiveIsFresh(metadata: Map<String, String>): Boolean {
@@ -497,7 +541,12 @@ private fun streamedArchiveIsFresh(metadata: Map<String, String>): Boolean {
         val (name, value) = directive.split('=', limit = 2).let { it.first() to it.getOrElse(1) { "" } }
         value.trim('"').toLongOrNull().takeIf { name.equals("max-age", ignoreCase = true) }
     } ?: return false
-    return Duration.between(responseTime, Instant.now()) < Duration.ofSeconds(maxAge)
+    // Age is time already spent in upstream caches, so it consumes the
+    // freshness lifetime before this response reaches the local cache.
+    val age = metadata[STREAM_AGE]?.toLongOrNull()?.coerceAtLeast(0) ?: 0
+    if (age >= maxAge)
+        return false
+    return Duration.between(responseTime, Instant.now()) < Duration.ofSeconds(maxAge - age)
 }
 
 class ResolvedURL(val path: Path, private val entry: DiskCache.OpenedEntry) : AutoCloseable {

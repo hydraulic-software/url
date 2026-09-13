@@ -507,6 +507,94 @@ class URLResolverTest {
     }
 
     @Test
+    fun `refresh fetches a streamed tarball again`() {
+        val archiveURI = URI("https://example.com/tool.tar.gz")
+        val first = tarGzOf("tool-1.0/bin/tool" to "version 1")
+        val second = tarGzOf("tool-1.0/bin/tool" to "version 2")
+        val archiveRequests = AtomicInteger()
+        val transport = HttpTransport { uri, _ ->
+            if (uri == archiveURI) {
+                val body = if (archiveRequests.incrementAndGet() == 1) first else second
+                HttpTransport.Response(200, mapOf("Cache-Control" to listOf("max-age=3600")), ByteArrayInputStream(body))
+            } else {
+                HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+            }
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache, transport = transport).resolve(URI("$archiveURI/tool-1.0/bin/tool")).use {
+                assertEquals("version 1", it.path.readText())
+            }
+            URLResolver(cache, transport = transport, refresh = true)
+                .resolve(URI("$archiveURI/tool-1.0/bin/tool")).use {
+                    assertEquals("version 2", it.path.readText())
+                }
+        }
+
+        assertEquals(2, archiveRequests.get())
+    }
+
+    @Test
+    fun `new streamed tarball responses discard obsolete validators`() {
+        val archiveURI = URI("https://example.com/tool.tar.gz")
+        val archiveRequests = AtomicInteger()
+        val validators = mutableListOf<String?>()
+        val transport = HttpTransport { uri, headers ->
+            if (uri == archiveURI) {
+                validators += headers["If-None-Match"]
+                val request = archiveRequests.incrementAndGet()
+                val responseHeaders = if (request == 1) {
+                    mapOf("Cache-Control" to listOf("max-age=0"), "ETag" to listOf("\"version-1\""))
+                } else {
+                    emptyMap()
+                }
+                HttpTransport.Response(
+                    200,
+                    responseHeaders,
+                    ByteArrayInputStream(tarGzOf("tool-1.0/bin/tool" to "version $request"))
+                )
+            } else {
+                HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+            }
+        }
+
+        makeCache().use { cache ->
+            val uri = URI("$archiveURI/tool-1.0/bin/tool")
+            URLResolver(cache, transport = transport).resolve(uri).close()
+            URLResolver(cache, transport = transport).resolve(uri).close()
+            URLResolver(cache, transport = transport).resolve(uri).close()
+        }
+
+        assertEquals(listOf(null, "\"version-1\"", null), validators)
+    }
+
+    @Test
+    fun `streamed tarball Age reduces its freshness lifetime`() {
+        val archiveURI = URI("https://example.com/tool.tar.gz")
+        val archiveRequests = AtomicInteger()
+        val transport = HttpTransport { uri, _ ->
+            if (uri == archiveURI) {
+                archiveRequests.incrementAndGet()
+                HttpTransport.Response(
+                    200,
+                    mapOf("Cache-Control" to listOf("max-age=60"), "Age" to listOf("3600")),
+                    ByteArrayInputStream(tarGzOf("tool-1.0/bin/tool" to "aged"))
+                )
+            } else {
+                HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+            }
+        }
+
+        makeCache().use { cache ->
+            val uri = URI("$archiveURI/tool-1.0/bin/tool")
+            URLResolver(cache, transport = transport).resolve(uri).close()
+            URLResolver(cache, transport = transport).resolve(uri).close()
+        }
+
+        assertEquals(2, archiveRequests.get())
+    }
+
+    @Test
     fun `zstandard tarball streams into extracted cache`() {
         val tarball = tarZstdOf("tool/member" to "zstandard member")
         val transport = HttpTransport { uri, _ ->
