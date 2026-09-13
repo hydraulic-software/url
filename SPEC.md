@@ -26,6 +26,21 @@ character is `#`. It must fail when no URLs remain.
 An input without a URI scheme must be interpreted as HTTPS. For example,
 `example.com/file` is equivalent to `https://example.com/file`.
 
+An input whose first `=` is preceded by a portable shell variable name
+matching `[A-Za-z_][A-Za-z0-9_]*` is a named input. The text after `=` is its
+URL. Named and unnamed inputs must not be mixed in one invocation. After every
+named input resolves successfully, stdout must contain corresponding POSIX
+shell assignment statements in input order, with paths quoted so the complete
+output can be safely passed to `eval`. For example:
+
+```sh
+resolved=$(url jdk=https://example.com/jdk.tar.gz/ jar=https://example.com/app.jar) &&
+eval "$resolved"
+```
+
+An `=` elsewhere in an input, such as in a URL path or query, has no special
+meaning because the preceding text is not a shell variable name.
+
 A conforming implementation must support `http` and `https` URLs. HTTP/1.1,
 HTTP/2, and HTTP/3 are all valid underlying protocol versions and must have
 the same observable resolution semantics. Protocol negotiation and fallback
@@ -38,7 +53,7 @@ must use HTTP or HTTPS.
 - `--print0`: terminate every output path with a NUL byte instead of a newline.
 - `--print-separator=CHAR`: terminate every output path with the single
   character `CHAR`. Any other length must fail. This and `--print0` are
-  mutually exclusive.
+  mutually exclusive. Neither option may be used with named inputs.
 - `--cache-key-url=URL`: use `URL` as the cache identity while fetching the
   input URL exactly as supplied. This requires exactly one input. An archive
   member requires a correspondingly archive-shaped cache-key URL.
@@ -59,10 +74,10 @@ must also accept the separated form, for example `--cache-dir PATH`.
 ## Resolution
 
 For each input, the command must resolve the resource into a stable local cache
-entry and print its absolute path. A successful path must continue to exist
-after the command exits, subject to later cache eviction. Repeated resolution
-may reuse a fresh response and should use standard HTTP validators when
-revalidation is required.
+entry and print its absolute path or named assignment. A successful path must
+continue to exist after the command exits, subject to later cache eviction.
+Repeated resolution may reuse a fresh response and should use standard HTTP
+validators when revalidation is required.
 
 For HTTP and HTTPS, the command must honor conventional `http_proxy`,
 `https_proxy`, and `no_proxy` environment variables, with uppercase aliases
@@ -140,9 +155,11 @@ Shell integration may be platform-specific and is otherwise non-contractual.
 
 ## Output, diagnostics, and failure
 
-On success, standard output must contain exactly one absolute path per input in
-input order, each followed by the selected separator. Progress and diagnostics
-must go to standard error.
+On success with unnamed inputs, standard output must contain exactly one
+absolute path per input in input order, each followed by the selected
+separator. With named inputs, it must contain the corresponding shell
+assignments described above. Progress and diagnostics must go to standard
+error.
 
 A failure must print no path for the failing input, stop emitting results,
 cancel outstanding resolution work where practical, and return non-zero. Paths

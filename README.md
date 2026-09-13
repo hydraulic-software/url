@@ -83,6 +83,19 @@ progress bar. Because stderr is inherited this works even inside substitutions.
 
 Progress events can be emitted as JSON or plain text if you wish also.
 
+## Resolving into shell variables
+
+Prefix every URL with a portable shell variable name to resolve them in
+parallel and emit safely quoted assignments:
+
+```shell
+$ resolved=$(url "jdk=$jdk_url" "jar=$jar_url") && eval "$resolved"
+$ "$jdk/bin/java" -jar "$jar" --help
+```
+
+Named inputs cannot be mixed with ordinary URL inputs or custom output
+separators. An `=` inside a URL path or query string remains part of the URL.
+
 ## Running programs
 
 `run foobar.com --help` is equivalent to:

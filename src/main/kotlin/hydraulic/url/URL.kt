@@ -40,7 +40,7 @@ class URL(
     @Parameters(
         index = "0..*",
         paramLabel = "URL",
-        description = ["HTTP(S) URLs to resolve; https:// is optional. Reads a commented list from stdin when omitted."]
+        description = ["HTTP(S) URLs or NAME=URL assignments to resolve; https:// is optional. Reads a commented list from stdin when omitted."]
     )
     var urls: List<String> = emptyList()
 
@@ -79,9 +79,16 @@ class URL(
     override fun call(): Int {
         require(printSeparator == null || printSeparator!!.length == 1) { "--print-separator requires exactly one character" }
         require(!print0 || printSeparator == null) { "--print0 and --print-separator cannot be used together" }
-        val inputs = urls.ifEmpty { readURLsFromStdin(stdin) }
+        val inputs = urls.ifEmpty { readURLsFromStdin(stdin) }.map(::parseURLInput)
         require(inputs.isNotEmpty()) { "No URLs were supplied as arguments or on stdin" }
         require(cacheKeyURL == null || inputs.size == 1) { "--cache-key-url requires exactly one input URL" }
+        val assignmentMode = inputs.first().variable != null
+        require(inputs.all { (it.variable != null) == assignmentMode }) {
+            "Variable assignments cannot be mixed with ordinary URL inputs"
+        }
+        require(!assignmentMode || (!print0 && printSeparator == null)) {
+            "Variable assignments cannot be combined with --print0 or --print-separator"
+        }
         val progressTracker = progressTracker(progress, System.err, environment, ::isStderrInteractive)
         val separator = when {
             print0 -> '\u0000'
@@ -96,9 +103,9 @@ class URL(
                     UserAgentHttpTransport(),
                     minimumFreeSpace
                 ) { Files.getFileStore(cacheDirectory).usableSpace }
-                val parallelProgress = ParallelURLProgress(inputs, progressTracker)
+                val parallelProgress = ParallelURLProgress(inputs.map(URLInput::url), progressTracker)
                 val paths = parallelMapOrdered(inputs) { index, input ->
-                    val uri = parseURL(input)
+                    val uri = parseURL(input.url)
                     try {
                         URLResolver(
                             cache,
@@ -116,9 +123,14 @@ class URL(
                 // Keep stdout machine-readable and deterministic: diagnostics and
                 // progress use stderr, and results retain input order even when a
                 // later download finishes first.
-                for (path in paths) {
-                    stdout.print(path)
-                    stdout.print(separator)
+                for ((input, path) in inputs.zip(paths)) {
+                    if (assignmentMode) {
+                        stdout.print(posixShellAssignment(input.variable!!, path.toString()))
+                        stdout.print('\n')
+                    } else {
+                        stdout.print(path)
+                        stdout.print(separator)
+                    }
                 }
             }
         } finally {
@@ -127,6 +139,27 @@ class URL(
         return 0
     }
 }
+
+internal data class URLInput(val url: String, val variable: String? = null)
+
+internal fun parseURLInput(input: String): URLInput {
+    val equals = input.indexOf('=')
+    if (equals <= 0)
+        return URLInput(input)
+    val variable = input.substring(0, equals)
+    if (!SHELL_VARIABLE.matches(variable))
+        return URLInput(input)
+    val url = input.substring(equals + 1)
+    require(url.isNotEmpty()) { "Variable assignment $variable requires a URL" }
+    return URLInput(url, variable)
+}
+
+internal fun posixShellAssignment(variable: String, value: String): String {
+    require(SHELL_VARIABLE.matches(variable)) { "Invalid shell variable name: $variable" }
+    return "$variable='${value.replace("'", "'\"'\"'")}'"
+}
+
+private val SHELL_VARIABLE = Regex("[A-Za-z_][A-Za-z0-9_]*")
 
 private const val MAX_PARALLEL_RESOLUTIONS = 8
 

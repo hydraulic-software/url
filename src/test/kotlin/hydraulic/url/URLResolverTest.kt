@@ -69,6 +69,56 @@ class URLResolverTest {
     }
 
     @Test
+    fun `URL inputs recognize portable shell variable assignments`() {
+        assertEquals(URLInput("https://example.com/jdk", "jdk"), parseURLInput("jdk=https://example.com/jdk"))
+        assertEquals(URLInput("example.com/file"), parseURLInput("example.com/file"))
+        assertEquals(URLInput("https://example.com/?name=value"), parseURLInput("https://example.com/?name=value"))
+        assertEquals(URLInput("example.com/file=name"), parseURLInput("example.com/file=name"))
+        assertEquals(URLInput("bad-name=example.com/file"), parseURLInput("bad-name=example.com/file"))
+        assertFailsWith<IllegalArgumentException> { parseURLInput("jdk=") }
+    }
+
+    @Test
+    fun `shell assignments quote paths for safe eval`() {
+        assertEquals("jdk='/tmp/has spaces/it'\"'\"'s here'", posixShellAssignment("jdk", "/tmp/has spaces/it's here"))
+        assertFailsWith<IllegalArgumentException> { posixShellAssignment("bad-name", "/tmp/file") }
+    }
+
+    @Test
+    fun `named URL inputs emit ordered assignments after parallel resolution`() = withServer { server ->
+        server.createContext("/jdk") { it.respond("jdk".toByteArray()) }
+        server.createContext("/jar") { it.respond("jar".toByteArray()) }
+        val output = ByteArrayOutputStream()
+        val command = URL(stdout = PrintStream(output), environment = emptyMap()).apply {
+            urls = listOf("jdk=${server.uri("/jdk")}", "jar=${server.uri("/jar")}")
+            cacheDirectory = (tempDir / "assignment-cache").createDirectories()
+            progress = "never"
+            downloadPolicy = DownloadPolicy().apply { minimumFreeSpaceMB = 0 }
+        }
+
+        assertEquals(0, command.call())
+
+        val assignments = output.toString().lines().filter(String::isNotEmpty)
+        assertEquals(2, assignments.size)
+        assertTrue(assignments[0].startsWith("jdk='"))
+        assertTrue(assignments[1].startsWith("jar='"))
+        assertEquals("jdk", Path.of(assignments[0].substringAfter("='").dropLast(1)).readText())
+        assertEquals("jar", Path.of(assignments[1].substringAfter("='").dropLast(1)).readText())
+    }
+
+    @Test
+    fun `named URL inputs reject mixed output modes before resolving`() {
+        val mixed = URL().apply { urls = listOf("jdk=example.com/jdk", "example.com/jar") }
+        assertFailsWith<IllegalArgumentException> { mixed.call() }
+
+        val customSeparator = URL().apply {
+            urls = listOf("jdk=example.com/jdk")
+            print0 = true
+        }
+        assertFailsWith<IllegalArgumentException> { customSeparator.call() }
+    }
+
+    @Test
     fun `stdin URL lists ignore comments and blank lines`() {
         val input = StringReader("""
             # Download inputs
