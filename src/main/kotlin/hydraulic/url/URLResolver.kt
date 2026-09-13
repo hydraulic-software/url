@@ -71,22 +71,25 @@ class URLResolver private constructor(
 
     private fun resolveOnce(uri: URI, cacheIdentity: URI): ResolvedURL {
         val expectedHash = sha256Lock(uri)
-        val archiveLock = parseArchiveURL(uri.withoutFragment())?.let {
+        val mayResolveAsArchive = parseArchiveURL(uri.withoutFragment())?.let {
             it.member.isNotEmpty() || uri.rawPath.endsWith('/')
         } == true
-        val resolved = resolveWithoutHashLock(
+        val resolution = resolveWithoutHashLock(
             uri.withoutFragment(),
             cacheIdentity.withoutFragment(),
-            archiveHash = expectedHash.takeIf { archiveLock }
+            archiveHash = expectedHash.takeIf { mayResolveAsArchive }
         )
+        val resolved = resolution.resource
         try {
             if (!resolved.path.exists())
                 damagedCacheEntry(resolved, "resolved content disappeared")
-            if (expectedHash != null && !archiveLock) {
+            if (expectedHash != null) {
                 require(resolved.path.isRegularFile()) { "SHA-256 locking requires a file result" }
-                val actualHash = resolved.path.sha256()
-                require(actualHash.equals(expectedHash, ignoreCase = true)) {
-                    "SHA-256 mismatch: expected $expectedHash but resolved $actualHash"
+                if (!resolution.archiveHashVerified) {
+                    val actualHash = resolved.path.sha256()
+                    require(actualHash.equals(expectedHash, ignoreCase = true)) {
+                        "SHA-256 mismatch: expected $expectedHash but resolved $actualHash"
+                    }
                 }
             }
             resolved.path.makeExecutableIfRecognized()
@@ -98,13 +101,13 @@ class URLResolver private constructor(
         }
     }
 
-    private fun resolveWithoutHashLock(uri: URI, cacheIdentity: URI, archiveHash: String? = null): ResolvedURL {
+    private fun resolveWithoutHashLock(uri: URI, cacheIdentity: URI, archiveHash: String? = null): Resolution {
         val archive = parseArchiveURL(uri)
         val identityArchive = parseArchiveURL(cacheIdentity)
         if (archive != null && archive.member.isEmpty() && uri.rawPath.endsWith('/'))
             return resolveArchive(archive, identityArchive ?: invalidArchiveIdentity(), archiveHash)
         try {
-            return resolveResource(uri, cacheIdentity).asSingleFile()
+            return Resolution(resolveResource(uri, cacheIdentity).asSingleFile())
         } catch (e: HttpStatusException) {
             if (e.statusCode != 404)
                 throw e
@@ -141,18 +144,18 @@ class URLResolver private constructor(
         }
     }
 
-    private fun resolveArchive(archive: ArchiveURL, identityArchive: ArchiveURL, archiveHash: String? = null): ResolvedURL {
+    private fun resolveArchive(archive: ArchiveURL, identityArchive: ArchiveURL, archiveHash: String? = null): Resolution {
         if (archiveHash == null && archive.archiveURI.isRemoteTarball() && parseArchiveURL(archive.archiveURI, 1) == null) {
             if (!cache.has(HttpResourceCache.cacheKey(identityArchive.archiveURI)))
-                return resolveStreamedArchive(archive, identityArchive)
+                return Resolution(resolveStreamedArchive(archive, identityArchive))
             val downloaded = resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
             try {
-                return resolveExtractedArchive(archive, downloaded.path)
+                return Resolution(resolveExtractedArchive(archive, downloaded.path))
             } finally {
                 downloaded.close()
             }
         }
-        val downloaded = resolveArchiveSource(archive, identityArchive, archiveHash)
+        val downloaded = resolveArchiveSource(archive, identityArchive)
         try {
             archiveHash?.let { expected ->
                 val actual = downloaded.path.sha256()
@@ -160,7 +163,7 @@ class URLResolver private constructor(
                     "SHA-256 mismatch: expected $expected but resolved archive has $actual"
                 }
             }
-            return resolveExtractedArchive(archive, downloaded.path)
+            return Resolution(resolveExtractedArchive(archive, downloaded.path), archiveHash != null)
         } finally {
             downloaded.close()
         }
@@ -236,7 +239,7 @@ class URLResolver private constructor(
         return ResolvedURL(resolvedMember, extracted)
     }
 
-    private fun resolveArchiveSource(archive: ArchiveURL, identityArchive: ArchiveURL, archiveHash: String?): ResolvedURL {
+    private fun resolveArchiveSource(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
         try {
             return resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
         } catch (e: HttpStatusException) {
@@ -244,7 +247,7 @@ class URLResolver private constructor(
                 throw e
             val outerArchive = parseArchiveURL(archive.archiveURI, 1) ?: throw e
             val identityOuterArchive = parseArchiveURL(identityArchive.archiveURI, 1) ?: invalidArchiveIdentity()
-            return resolveArchive(outerArchive, identityOuterArchive, archiveHash)
+            return resolveArchive(outerArchive, identityOuterArchive).resource
         }
     }
 
@@ -271,6 +274,8 @@ class URLResolver private constructor(
         throw IOException("Cache entry is incomplete after rebuilding it: $detail", cause)
     }
 }
+
+private data class Resolution(val resource: ResolvedURL, val archiveHashVerified: Boolean = false)
 
 internal class MissingArchiveMemberException(message: String) : IllegalArgumentException(message)
 

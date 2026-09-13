@@ -403,6 +403,38 @@ class URLResolverTest {
     }
 
     @Test
+    fun `archive-shaped URLs served directly validate the returned file`() = withServer { server ->
+        val contents = "direct response".toByteArray()
+        server.createContext("/") { it.respond(contents) }
+
+        makeCache().use { cache ->
+            URLResolver(cache).resolve(server.uri("/tool.zip/bin/tool#sha256=${contents.sha256()}"))
+                .use { resolved -> assertEquals("direct response", resolved.path.readText()) }
+            assertFailsWith<IllegalArgumentException> {
+                URLResolver(cache).resolve(server.uri("/tool.zip/bin/tool#sha256=${"0".repeat(64)}"))
+            }
+        }
+    }
+
+    @Test
+    fun `hash locks reject archive directory results`() = withServer { server ->
+        val zip = zipOf("tool-1.0/bin/tool" to "archive member")
+        server.createContext("/") {
+            if (it.requestURI.path == "/tool.zip") it.respond(zip) else it.respond404()
+        }
+        val lock = zip.sha256()
+
+        makeCache().use { cache ->
+            assertFailsWith<IllegalArgumentException> {
+                URLResolver(cache).resolve(server.uri("/tool.zip/#sha256=$lock"))
+            }
+            assertFailsWith<IllegalArgumentException> {
+                URLResolver(cache).resolve(server.uri("/tool.zip/bin/#sha256=$lock"))
+            }
+        }
+    }
+
+    @Test
     fun `trailing slash resolves to archive root with a single wrapper removed`() = withServer { server ->
         val requestedPaths = mutableListOf<String>()
         val zip = zipOf("tool-1.0/bin/tool" to "archive member")
@@ -787,6 +819,21 @@ class URLResolverTest {
     }
 
     @Test
+    fun `nested archive hash locks authenticate only the innermost archive`() = withServer { server ->
+        val innerZip = zipOf("inner/file.txt" to "nested member")
+        val outerZip = zipOfBytes("outer/dir/inner.zip" to innerZip)
+        server.createContext("/") {
+            if (it.requestURI.path == "/outer.zip") it.respond(outerZip) else it.respond404()
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache).resolve(
+                server.uri("/outer.zip/dir/inner.zip/file.txt#sha256=${innerZip.sha256()}")
+            ).use { resolved -> assertEquals("nested member", resolved.path.readText()) }
+        }
+    }
+
+    @Test
     fun `SHA-256 fragment locks the final resolved file`() = withServer { server ->
         val contents = "locked contents".toByteArray()
         val requestTargets = mutableListOf<String>()
@@ -978,6 +1025,18 @@ class URLResolverTest {
 
         assertEquals(pkl.toAbsolutePath(), localRunPackage(directory.toString()))
         assertEquals(null, localRunPackage((tempDir / "missing").toString()))
+    }
+
+    @Test
+    fun `bare launch-plan executables use the host command search path`() {
+        val packageFile = Path.of("site/demo/run.pkl").toAbsolutePath()
+        val packageDir = packageFile.parent
+        val runPackage = evaluateRunPackage(
+            packageFile,
+            RunContext("windows", "x86_64", null, emptyList(), packageDir)
+        )
+
+        assertEquals(Path.of("powershell.exe"), runPackage.launchPlan(emptyMap()).executable)
     }
 
     @Test

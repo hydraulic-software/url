@@ -115,10 +115,12 @@ The exact extraction-cache path is not part of this specification.
 ### SHA-256 locks
 
 An input may append `#sha256=<64 hexadecimal characters>`. The fragment must
-not be sent in the HTTP request. For a non-archive URL, the command must hash
-the final file. For an archive URL, including one selecting a member, it must
-hash the complete archive before extraction. A lock selecting a directory must
-fail. Other URI fragments have no locking meaning.
+not be sent in the HTTP request. If resolution returns an ordinary HTTP
+resource, the command must hash that final file even when its path looks like
+an archive member. If resolution extracts an archive, it must hash the complete
+innermost archive before extraction. For example, a lock on
+`outer.zip/inner.zip/file` authenticates `inner.zip`. A lock selecting a
+directory must fail. Other URI fragments have no locking meaning.
 
 ## Output, diagnostics, and failure
 

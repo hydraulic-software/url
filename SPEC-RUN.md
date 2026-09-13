@@ -95,10 +95,11 @@ The context provides these properties:
   absolute resolved paths.
 
 The module must provide `executable` as a string and `arguments` as a list of
-strings. Relative executable paths are resolved against `c.packageDir`. `run`
-starts the resulting process directly and passes its arguments unchanged. A
-package can therefore point `executable` at a bundled executable or script if
-Pkl is insufficient or unwanted.
+strings. A bare executable name is resolved using the host's normal command
+search path. Other relative executable paths are resolved against
+`c.packageDir`. `run` starts the resulting process directly and passes its
+arguments unchanged. A package can therefore point `executable` at a bundled
+executable or script if Pkl is insufficient or unwanted.
 
 On Windows a URL in `urls` may omit a final `.exe` suffix. `run` first
 resolves the URL exactly as written and, if the resource or archive member does

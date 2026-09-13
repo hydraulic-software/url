@@ -122,8 +122,12 @@ private fun launchPlan(module: PModule, packageDir: Path): LaunchPlan {
         "run.pkl property 'executable' must be a non-empty string"
     }
     val executable = Path.of(executableValue).let { path ->
-        if (path.isAbsolute()) path else packageDir.resolve(path)
-    }.toAbsolutePath().normalize()
+        when {
+            path.isAbsolute() -> path.normalize()
+            path.parent == null -> path
+            else -> packageDir.resolve(path).toAbsolutePath().normalize()
+        }
+    }
 
     val argumentsValue = module.getProperty("arguments")
     require(argumentsValue is List<*>) { "run.pkl property 'arguments' must be a list of strings" }
