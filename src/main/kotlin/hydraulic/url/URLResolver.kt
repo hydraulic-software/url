@@ -172,7 +172,7 @@ class URLResolver private constructor(
 
     private fun resolveExtractedArchive(archive: ArchiveURL, archiveFile: Path): ResolvedURL {
         val extracted = cache.getAndCustomizeEntry(extractedArchiveCacheKey(archiveFile), rerun = false) { destination ->
-            extractLocalArchive(archiveFile, destination, skipSingleRoot = true)
+            extractLocalArchive(archiveFile, destination)
             DiskCache.EntryComputationResult()
         }
         return selectArchiveMember(archive, extracted)
@@ -198,7 +198,7 @@ class URLResolver private constructor(
                         checkNotNull(previousDirectory) { "Received HTTP 304 without cached extraction for ${archive.archiveURI}" }
                         copyDirectory(previousDirectory, destination)
                     }
-                    in 200..299 -> extractStreamingTar(body, destination, skipSingleRoot = true)
+                    in 200..299 -> extractStreamingTar(body, destination)
                     else -> throw HttpStatusException(archive.archiveURI, response.statusCode)
                 }
             }
@@ -462,11 +462,12 @@ internal fun Path.sha256(): String {
 
 internal fun extractedArchiveCacheKey(archive: Path): String = """
     Extracted archive
+    Layout version: 2
     File name: ${archive.name}
     SHA-256: ${archive.fingerprint()}
 """.trimIndent()
 
-internal fun streamedArchiveCacheKey(uri: URI): String = "Streamed extracted archive\nURI: $uri"
+internal fun streamedArchiveCacheKey(uri: URI): String = "Streamed extracted archive\nLayout version: 2\nURI: $uri"
 
 private const val STREAM_RESPONSE_TIME = "stream.response-time"
 private const val STREAM_CACHE_CONTROL = "stream.cache-control"

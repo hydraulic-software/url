@@ -13,14 +13,10 @@ import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFilePermission
 import kotlin.io.path.createDirectories
-import kotlin.io.path.deleteExisting
-import kotlin.io.path.isDirectory
 import kotlin.io.path.isSymbolicLink
-import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.moveTo
 
 /** Extracts a tar stream without materializing the compressed archive on disk. */
-internal fun extractStreamingTar(input: InputStream, destination: Path, skipSingleRoot: Boolean = false) {
+internal fun extractStreamingTar(input: InputStream, destination: Path) {
     destination.createDirectories()
     val root = destination.toRealPath()
     val state = StreamingExtractionState(root)
@@ -46,8 +42,6 @@ internal fun extractStreamingTar(input: InputStream, destination: Path, skipSing
         }
     }
     state.createSymlinks()
-    if (skipSingleRoot)
-        removeStreamingSingleRoot(root)
 }
 
 private val ZSTD_MAGIC = byteArrayOf(0x28, 0xb5.toByte(), 0x2f, 0xfd.toByte())
@@ -70,6 +64,7 @@ private fun extractTarEntry(input: InputStream, entry: TarArchiveEntry, state: S
     }
     if (entry.isSymbolicLink) {
         val linkTarget = Path.of(entry.linkName)
+        // Keep this link virtual until all ordinary entries have been written. See StreamingExtractionState.
         state.deferSymlink(logicalTarget, linkTarget, entry.name)
         return
     }
@@ -84,6 +79,25 @@ private fun extractTarEntry(input: InputStream, entry: TarArchiveEntry, state: S
     applyTarMode(target, entry.mode)
 }
 
+/**
+ * Keeps archive symlinks virtual until extraction is otherwise complete.
+ *
+ * Checking that each normalized entry name starts with [root] is not sufficient. Consider an archive containing, in
+ * order:
+ *
+ *     a              -> .
+ *     a/link         -> ..
+ *     a/link/payload (regular file)
+ *
+ * If the links are created immediately, opening `root/a/link/payload` actually writes `root/../payload`. Every entry
+ * name passed the lexical root check, and `NOFOLLOW_LINKS` on the output file does not help because the dangerous
+ * links are parent components rather than the final path component.
+ *
+ * Instead, [symlinks] records links without creating them. Parent paths of later entries are resolved against that
+ * virtual map, so a legitimate `a/b -> ../d` followed by `a/b/c` writes `d/c`, while a chain that leaves [root] is
+ * rejected before anything is written there. Once all regular entries are complete, every remaining link is validated
+ * before any link is materialized, ensuring one link cannot redirect creation of another.
+ */
 private class StreamingExtractionState(val root: Path) {
     private val symlinks = linkedMapOf<Path, Path>()
 
@@ -113,6 +127,8 @@ private class StreamingExtractionState(val root: Path) {
     }
 
     fun createSymlinks() {
+        // Validate the complete graph first. Creating even one link before this pass completes would let the filesystem
+        // affect validation or placement of links encountered later in the map.
         for ((location, target) in symlinks) {
             requireSafeParents(location, location.toString())
             resolveVirtualTarget(location, target)
@@ -139,6 +155,8 @@ private class StreamingExtractionState(val root: Path) {
     }
 
     private fun resolveParent(logicalTarget: Path, entryName: String): Path {
+        // Resolve only parents: a later archive entry at exactly the same path replaces an earlier virtual symlink
+        // instead of following it, matching normal archive overwrite semantics.
         val parent = resolveComponents(root, root.relativize(logicalTarget.parent), entryName)
         return parent.resolve(logicalTarget.fileName)
     }
@@ -185,16 +203,4 @@ private fun applyTarMode(path: Path, mode: Int) {
         0b000_000_001 to PosixFilePermission.OTHERS_EXECUTE
     )
     runCatching { Files.setPosixFilePermissions(path, flags.filter { mode and it.first != 0 }.map { it.second }.toSet()) }
-}
-
-private fun removeStreamingSingleRoot(destination: Path) {
-    val entries = destination.listDirectoryEntries()
-    if (entries.size != 1 || !entries.single().isDirectory(LinkOption.NOFOLLOW_LINKS))
-        return
-    val root = entries.single()
-    val temporary = Files.createTempDirectory(destination.parent, "${destination.fileName}.single-root-")
-    temporary.deleteExisting()
-    root.moveTo(temporary)
-    temporary.listDirectoryEntries().forEach { it.moveTo(destination.resolve(it.fileName)) }
-    temporary.deleteExisting()
 }

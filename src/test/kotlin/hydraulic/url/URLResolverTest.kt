@@ -350,7 +350,9 @@ class URLResolverTest {
     fun `extracted archive cache keys are human readable documents`() {
         val archive = tempDir / "tool.zip"
         archive.writeBytes("contents".toByteArray())
-        assertTrue(extractedArchiveCacheKey(archive).matches(Regex("Extracted archive\\nFile name: tool\\.zip\\nSHA-256: [a-z0-9]+")))
+        assertTrue(extractedArchiveCacheKey(archive).matches(
+            Regex("Extracted archive\\nLayout version: 2\\nFile name: tool\\.zip\\nSHA-256: [a-z0-9]+")
+        ))
     }
 
     @Test
@@ -380,7 +382,7 @@ class URLResolverTest {
         }
 
         makeCache().use { cache ->
-            URLResolver(cache).resolve(server.uri("/tool.zip/bin/tool")).use { resolved ->
+            URLResolver(cache).resolve(server.uri("/tool.zip/tool-1.0/bin/tool")).use { resolved ->
                 assertEquals("archive member", resolved.path.readText())
             }
         }
@@ -395,10 +397,10 @@ class URLResolverTest {
         }
 
         makeCache().use { cache ->
-            URLResolver(cache).resolve(server.uri("/tool.zip/bin/tool#sha256=${zip.sha256()}"))
+            URLResolver(cache).resolve(server.uri("/tool.zip/tool-1.0/bin/tool#sha256=${zip.sha256()}"))
                 .use { resolved -> assertEquals("archive member", resolved.path.readText()) }
             assertFailsWith<IllegalArgumentException> {
-                URLResolver(cache).resolve(server.uri("/tool.zip/bin/tool#sha256=${"0".repeat(64)}"))
+                URLResolver(cache).resolve(server.uri("/tool.zip/tool-1.0/bin/tool#sha256=${"0".repeat(64)}"))
             }
         }
     }
@@ -430,13 +432,13 @@ class URLResolverTest {
                 URLResolver(cache).resolve(server.uri("/tool.zip/#sha256=$lock"))
             }
             assertFailsWith<IllegalArgumentException> {
-                URLResolver(cache).resolve(server.uri("/tool.zip/bin/#sha256=$lock"))
+                URLResolver(cache).resolve(server.uri("/tool.zip/tool-1.0/bin/#sha256=$lock"))
             }
         }
     }
 
     @Test
-    fun `trailing slash resolves to archive root with a single wrapper removed`() = withServer { server ->
+    fun `trailing slash resolves to the exact archive root`() = withServer { server ->
         val requestedPaths = mutableListOf<String>()
         val zip = zipOf("tool-1.0/bin/tool" to "archive member")
         server.createContext("/") { exchange ->
@@ -450,7 +452,7 @@ class URLResolverTest {
         makeCache().use { cache ->
             URLResolver(cache).resolve(server.uri("/tool.zip/")).use { resolved ->
                 assertTrue(resolved.path.isDirectory())
-                assertEquals("archive member", (resolved.path / "bin/tool").readText())
+                assertEquals("archive member", (resolved.path / "tool-1.0/bin/tool").readText())
             }
         }
         assertEquals(listOf("/tool.zip"), requestedPaths)
@@ -473,13 +475,16 @@ class URLResolverTest {
         }
 
         makeCache().use { cache ->
-            URLResolver(cache, transport = transport).resolve(URI("https://example.com/tool.tar.gz/bin/tool")).use {
+            URLResolver(cache, transport = transport).resolve(URI("https://example.com/tool.tar.gz/tool-1.0/bin/tool")).use {
                 assertEquals("streamed member", it.path.readText())
             }
-            URLResolver(cache, transport = transport).resolve(URI("https://example.com/tool.tar.gz/bin/tool")).close()
+            URLResolver(cache, transport = transport).resolve(URI("https://example.com/tool.tar.gz/tool-1.0/bin/tool")).close()
             assertFalse(cache.has(HttpResourceCache.cacheKey(URI("https://example.com/tool.tar.gz"))))
         }
-        assertEquals(listOf("/tool.tar.gz/bin/tool", "/tool.tar.gz", "/tool.tar.gz/bin/tool"), requests.map { it.path })
+        assertEquals(
+            listOf("/tool.tar.gz/tool-1.0/bin/tool", "/tool.tar.gz", "/tool.tar.gz/tool-1.0/bin/tool"),
+            requests.map { it.path }
+        )
     }
 
     @Test
@@ -495,7 +500,7 @@ class URLResolverTest {
                 HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
             }
 
-            URLResolver(cache, transport = transport).resolve(URI("$archiveURI/bin/tool")).use {
+            URLResolver(cache, transport = transport).resolve(URI("$archiveURI/tool-1.0/bin/tool")).use {
                 assertEquals("cached member", it.path.readText())
             }
         }
@@ -512,7 +517,7 @@ class URLResolverTest {
         }
 
         makeCache().use { cache ->
-            URLResolver(cache, transport = transport).resolve(URI("https://example.com/tool.tar.zst/member")).use {
+            URLResolver(cache, transport = transport).resolve(URI("https://example.com/tool.tar.zst/tool/member")).use {
                 assertEquals("zstandard member", it.path.readText())
             }
             assertFalse(cache.has(HttpResourceCache.cacheKey(URI("https://example.com/tool.tar.zst"))))
@@ -766,7 +771,7 @@ class URLResolverTest {
         }
 
         makeCache().use { cache ->
-            val uri = server.uri("/tool.zip/bin/tool")
+            val uri = server.uri("/tool.zip/tool-1.0/bin/tool")
             val member = URLResolver(cache).resolve(uri).use { it.path }
             assertTrue(Files.deleteIfExists(member))
 
@@ -809,12 +814,16 @@ class URLResolverTest {
         }
 
         makeCache().use { cache ->
-            URLResolver(cache).resolve(server.uri("/outer.zip/dir/inner.zip/file.txt")).use { resolved ->
+            URLResolver(cache).resolve(server.uri("/outer.zip/outer/dir/inner.zip/inner/file.txt")).use { resolved ->
                 assertEquals("nested member", resolved.path.readText())
             }
         }
         assertEquals(
-            listOf("/outer.zip/dir/inner.zip/file.txt", "/outer.zip/dir/inner.zip", "/outer.zip"),
+            listOf(
+                "/outer.zip/outer/dir/inner.zip/inner/file.txt",
+                "/outer.zip/outer/dir/inner.zip",
+                "/outer.zip"
+            ),
             requests
         )
     }
@@ -829,7 +838,7 @@ class URLResolverTest {
 
         makeCache().use { cache ->
             URLResolver(cache).resolve(
-                server.uri("/outer.zip/dir/inner.zip/file.txt#sha256=${innerZip.sha256()}")
+                server.uri("/outer.zip/outer/dir/inner.zip/inner/file.txt#sha256=${innerZip.sha256()}")
             ).use { resolved -> assertEquals("nested member", resolved.path.readText()) }
         }
     }
@@ -889,7 +898,7 @@ class URLResolverTest {
         archive.writeBytes(zipOf("../escaped" to "bad"))
 
         assertFailsWith<IllegalArgumentException> {
-            extractLocalArchive(archive, (tempDir / "extracted").createDirectories(), skipSingleRoot = false)
+            extractLocalArchive(archive, (tempDir / "extracted").createDirectories())
         }
 
         assertFalse((tempDir / "escaped").toFile().exists())
@@ -907,7 +916,7 @@ class URLResolverTest {
 
         makeCache().use { cache ->
             val exception = assertFailsWith<IllegalArgumentException> {
-                URLResolver(cache).resolve(server.uri("/symlink.zip/link"))
+                URLResolver(cache).resolve(server.uri("/symlink.zip/root/link"))
             }
             assertTrue(exception.message!!.contains("escapes its extraction root"))
         }
@@ -919,9 +928,9 @@ class URLResolverTest {
         archive.writeBytes(unixZipOf("root/bin/java", "../lib/jvm", UnixStat.LINK_FLAG or 0b111_101_101))
         val destination = (tempDir / "extracted").createDirectories()
 
-        extractLocalArchive(archive, destination, skipSingleRoot = true)
+        extractLocalArchive(archive, destination)
 
-        val link = destination / "bin/java"
+        val link = destination / "root/bin/java"
         assertTrue(link.isSymbolicLink())
         assertEquals(Path.of("../lib/jvm"), Files.readSymbolicLink(link))
     }
@@ -1136,12 +1145,12 @@ class URLResolverTest {
 
         makeCache().use { cache ->
             val resolver = URLResolver(cache)
-            resolveRunURL(resolver, server.uri("/tool.zip/bin/tool"), windows = true).use { resolved ->
+            resolveRunURL(resolver, server.uri("/tool.zip/tool-1.0/bin/tool"), windows = true).use { resolved ->
                 assertEquals("tool.exe", resolved.path.fileName.toString())
                 assertEquals("windows executable", resolved.path.readText())
             }
             assertFailsWith<IllegalArgumentException> {
-                resolveRunURL(resolver, server.uri("/tool.zip/bin/tool"), windows = false)
+                resolveRunURL(resolver, server.uri("/tool.zip/tool-1.0/bin/tool"), windows = false)
             }
         }
     }
@@ -1158,7 +1167,7 @@ class URLResolverTest {
             RunContext("macos", "arm64", null, listOf("input.cel"), packageDir)
         )
         assertTrue(macPackage.urls.getValue("java").contains(
-            "graalvm-jdk-25_macos-aarch64_bin.tar.gz/Contents/Home/bin/java#sha256="
+            "graalvm-jdk-25_macos-aarch64_bin.tar.gz/graalvm-jdk-25.0.4+7.1/Contents/Home/bin/java#sha256="
         ))
         assertTrue(macPackage.urls.getValue("verifier").endsWith(
             "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
@@ -1181,7 +1190,7 @@ class URLResolverTest {
             RunContext("windows", "x86_64", "0.14.0", emptyList(), packageDir)
         )
         assertTrue(windowsPackage.urls.getValue("java").contains(
-            "graalvm-jdk-25_windows-x64_bin.zip/bin/java#sha256="
+            "graalvm-jdk-25_windows-x64_bin.zip/graalvm-jdk-25.0.4+7.1/bin/java#sha256="
         ))
         assertTrue(windowsPackage.urls.getValue("verifier").endsWith(
             "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
@@ -1305,10 +1314,10 @@ class URLResolverTest {
         archive.writeBytes(unixZipOf("root/bin/tool", "contents", UnixStat.FILE_FLAG or 0b111_101_101))
         val destination = (tempDir / "extracted").createDirectories()
 
-        extractLocalArchive(archive, destination, skipSingleRoot = true)
+        extractLocalArchive(archive, destination)
 
-        assertEquals("contents", (destination / "bin/tool").readText())
-        assertTrue(Files.isExecutable(destination / "bin/tool"))
+        assertEquals("contents", (destination / "root/bin/tool").readText())
+        assertTrue(Files.isExecutable(destination / "root/bin/tool"))
     }
 
     @Test

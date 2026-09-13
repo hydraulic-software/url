@@ -25,9 +25,10 @@ verifierLock = if (verifierHashes.containsKey(ver)) "#sha256=\(verifierHashes[ve
 
 archive = if (c.os == "windows") "zip" else "tar.gz"
 bundle = if (c.os == "macos") "Contents/Home/" else ""
+jdkRoot = "graalvm-jdk-25.0.4+7.1/"
 
 urls {
-  java = "https://download.oracle.com/graalvm/25/latest/graalvm-jdk-25_\(jdkPlatform)_bin.\(archive)/\(bundle)bin/java#sha256=\(jdkHashes[jdkPlatform])"
+  java = "https://download.oracle.com/graalvm/25/latest/graalvm-jdk-25_\(jdkPlatform)_bin.\(archive)/\(jdkRoot)\(bundle)bin/java#sha256=\(jdkHashes[jdkPlatform])"
   verifier = "https://repo1.maven.org/maven2/dev/cel/verifier-cli/\(ver)/verifier-cli-\(ver).jar\(verifierLock)"
 }
 
