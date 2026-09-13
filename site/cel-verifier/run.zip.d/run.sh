@@ -20,4 +20,4 @@ if [ -d "$jdk_home/Contents/Home" ]; then
   jdk_home="$jdk_home/Contents/Home"
 fi
 
-exec "$jdk_home/bin/java" --enable-native-access=ALL-UNNAMED -jar "$verifier" repl "$@"
+exec "$jdk_home/bin/java" --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED -jar "$verifier" repl "$@"
