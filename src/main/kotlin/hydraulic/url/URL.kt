@@ -167,10 +167,11 @@ internal fun <T, R> parallelMapOrdered(
     }
 }
 
-/** Gives each parallel resolution its own progress4j subreport. */
+/** Gives each resolution its own progress4j subreport when multiple inputs run in parallel. */
 internal class ParallelURLProgress(inputs: List<String>, tracker: ProgressReport.Tracker?) {
     private val labels = inputs.map(::progressLabel)
-    private val combiner = tracker?.let { ProgressStreamCombiner(false, it) }
+    private val directTracker = tracker.takeIf { inputs.size == 1 }
+    private val combiner = tracker?.takeIf { inputs.size > 1 }?.let { ProgressStreamCombiner(false, it) }
     private val completed = AtomicInteger()
     private val base = ProgressReport.create("Resolving URLs", inputs.size)
     private val children = labels.map { label ->
@@ -182,6 +183,10 @@ internal class ParallelURLProgress(inputs: List<String>, tracker: ProgressReport
     }
 
     fun tracker(index: Int): ProgressReport.Tracker? {
+        if (directTracker != null) {
+            require(index == 0)
+            return directTracker
+        }
         val child = children[index] ?: return null
         val label = labels[index]
         return ProgressReport.Tracker { progress ->
@@ -191,6 +196,10 @@ internal class ParallelURLProgress(inputs: List<String>, tracker: ProgressReport
     }
 
     fun complete(index: Int) {
+        if (directTracker != null) {
+            require(index == 0)
+            return
+        }
         val child = children[index] ?: return
         child.report(ProgressReport.create(labels[index], 1, 1))
         combiner!!.report(base.withCompleted(completed.incrementAndGet().toLong()))

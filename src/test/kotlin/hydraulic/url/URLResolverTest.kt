@@ -208,6 +208,19 @@ class URLResolverTest {
     }
 
     @Test
+    fun `single URL progress is reported directly without subreports`() {
+        val reports = mutableListOf<dev.progress4j.api.ProgressReport>()
+        val progress = ParallelURLProgress(listOf("only")) { reports += it }
+
+        progress.tracker(0)!!.report(dev.progress4j.api.ProgressReport.create("Downloading", 20, 5))
+        progress.complete(0)
+
+        assertEquals(1, reports.size)
+        assertEquals("Downloading", reports.single().message)
+        assertTrue(reports.single().subReports.isEmpty())
+    }
+
+    @Test
     fun `parallel mapping is bounded and retains input order`() {
         val firstWave = CountDownLatch(3)
         val active = AtomicInteger()
