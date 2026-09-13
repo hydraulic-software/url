@@ -488,6 +488,34 @@ class URLResolverTest {
     }
 
     @Test
+    fun `hash locked streamed tarball is reused without revalidation`() {
+        val archiveURI = URI("https://example.com/tool.tar.gz")
+        val tarball = tarGzOf("tool-1.0/bin/tool" to "locked member")
+        val archiveRequests = AtomicInteger()
+        val transport = HttpTransport { uri, headers ->
+            if (uri == archiveURI) {
+                assertEquals(0, archiveRequests.getAndIncrement())
+                assertTrue(headers["If-None-Match"] == null)
+                HttpTransport.Response(
+                    200,
+                    mapOf("Cache-Control" to listOf("no-cache"), "ETag" to listOf("\"archive\"")),
+                    ByteArrayInputStream(tarball)
+                )
+            } else {
+                HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+            }
+        }
+        val uri = URI("$archiveURI/tool-1.0/bin/tool#sha256=${tarball.sha256()}")
+
+        makeCache().use { cache ->
+            URLResolver(cache, transport = transport).resolve(uri).close()
+            URLResolver(cache, transport = transport).resolve(uri).close()
+        }
+
+        assertEquals(1, archiveRequests.get())
+    }
+
+    @Test
     fun `cached tarball is extracted locally instead of fetched again`() {
         val archiveURI = URI("https://example.com/tool.tar.gz")
         val tarball = tarGzOf("tool-1.0/bin/tool" to "cached member")

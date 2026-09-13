@@ -9,7 +9,10 @@ import hydraulic.diskcache.http.HttpTransport
 import hydraulic.diskcache.http.JdkHttpTransport
 import hydraulic.archives.extractLocalArchive
 import hydraulic.utils.hashing.fingerprint
+import java.io.FilterInputStream
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -18,6 +21,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
+import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.time.Instant
 import java.time.Duration
@@ -56,6 +60,11 @@ class URLResolver private constructor(
     private val cache = CompleteEntryDiskCache(cache)
     private val resources = HttpResourceCache(
         if (refresh) RefreshingDiskCache(this.cache) else this.cache,
+        transport = transport,
+        progressTracker = progressTracker
+    )
+    private val hashLockedResources = HttpResourceCache(
+        RefreshingDiskCache(this.cache),
         transport = transport,
         progressTracker = progressTracker
     )
@@ -100,7 +109,7 @@ class URLResolver private constructor(
                 damagedCacheEntry(resolved, "resolved content disappeared")
             if (expectedHash != null) {
                 require(resolved.path.isRegularFile()) { "SHA-256 locking requires a file result" }
-                if (!resolution.archiveHashVerified) {
+                if (!resolution.hashVerified) {
                     val actualHash = resolved.path.sha256()
                     require(actualHash.equals(expectedHash, ignoreCase = true)) {
                         "SHA-256 mismatch: expected $expectedHash but resolved $actualHash"
@@ -128,7 +137,7 @@ class URLResolver private constructor(
         // A URL that looks like an archive member can still be an ordinary
         // resource, so preserve ordinary HTTP resolution as the first attempt.
         try {
-            return Resolution(resolveResource(uri, cacheIdentity).asSingleFile())
+            return resolveResource(uri, cacheIdentity, expectedArchiveHash)
         } catch (e: HttpStatusException) {
             if (e.statusCode != 404)
                 throw e
@@ -141,30 +150,73 @@ class URLResolver private constructor(
         )
     }
 
-    private fun resolveResource(uri: URI, cacheIdentity: URI): DiskCache.OpenedEntry {
-        val entry = resources.resolve(uri, cacheIdentity)
-        val file = entry.singleFile()
-        val policy = file.hashbangCachePolicy() ?: return entry
-        if (entry.metadata[HTTP_CACHE_CONTROL_METADATA] == policy)
-            return entry
-        // The policy is encoded in the downloaded file, so attach it to the
-        // HTTP cache entry after the resource cache has produced the body.
-        val oldDirectory = entry.directory
-        val metadata = entry.metadata + (HTTP_CACHE_CONTROL_METADATA to policy)
-        entry.close()
-        return cache.getAndCustomizeEntry(HttpResourceCache.cacheKey(cacheIdentity), rerun = true) { destination ->
-            Files.walk(oldDirectory).use { paths ->
-                for (path in paths) {
-                    val relative = oldDirectory.relativize(path)
-                    val target = destination.resolve(relative)
-                    if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS))
-                        Files.createDirectories(target)
-                    else
-                        Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES, LinkOption.NOFOLLOW_LINKS)
+    private fun resolveResource(
+        uri: URI,
+        cacheIdentity: URI,
+        expectedHash: String? = null
+    ): Resolution {
+        val matchingCachedEntry = expectedHash?.let { hash ->
+            // A hash lock makes a matching cached body immutable. Reuse it
+            // directly instead of asking the origin whether it is still fresh.
+            val cached = cache.lookup(HttpResourceCache.cacheKey(cacheIdentity))
+            if (cached != null) {
+                if (cached.metadata[HTTP_CONTENT_HASH_METADATA] == hash)
+                    cached
+                else {
+                    val file = cached.directory.listDirectoryEntries().singleOrNull()
+                    if (file?.isRegularFile() == true && file.sha256().equals(hash, ignoreCase = true)) {
+                        val oldDirectory = cached.directory
+                        val metadata = cached.metadata + (HTTP_CONTENT_HASH_METADATA to hash)
+                        cached.close()
+                        replaceCacheEntry(HttpResourceCache.cacheKey(cacheIdentity), oldDirectory, metadata)
+                    } else {
+                        cached.close()
+                        null
+                    }
                 }
+            } else {
+                null
             }
-            DiskCache.EntryComputationResult(metadata = metadata)
         }
+        val entry = matchingCachedEntry ?: run {
+            // A hash-locked miss must fetch a new body without conditional
+            // headers; the lock is the validator for this request.
+            (if (expectedHash == null) resources else hashLockedResources).resolve(uri, cacheIdentity)
+        }
+        val file = entry.singleFile()
+        var metadata = entry.metadata
+        val hashVerified = expectedHash != null && metadata[HTTP_CONTENT_HASH_METADATA] == expectedHash
+        if (expectedHash != null && !hashVerified) {
+            try {
+                require(file.sha256().equals(expectedHash, ignoreCase = true)) {
+                    "SHA-256 mismatch: expected $expectedHash but resolved $uri"
+                }
+            } catch (e: Exception) {
+                entry.close()
+                throw e
+            }
+            metadata = metadata + (HTTP_CONTENT_HASH_METADATA to expectedHash)
+        }
+        val policy = file.hashbangCachePolicy()
+        if (policy != null && metadata[HTTP_CACHE_CONTROL_METADATA] != policy)
+            metadata = metadata + (HTTP_CACHE_CONTROL_METADATA to policy)
+        val finalEntry = if (metadata == entry.metadata) {
+            entry
+        } else {
+            val oldDirectory = entry.directory
+            entry.close()
+            replaceCacheEntry(HttpResourceCache.cacheKey(cacheIdentity), oldDirectory, metadata)
+        }
+        return Resolution(finalEntry.asSingleFile(), hashVerified || expectedHash != null)
+    }
+
+    private fun replaceCacheEntry(
+        key: String,
+        oldDirectory: Path,
+        metadata: Map<String, String>
+    ): DiskCache.OpenedEntry = cache.getAndCustomizeEntry(key, rerun = true) { destination ->
+        copyDirectory(oldDirectory, destination)
+        DiskCache.EntryComputationResult(metadata = metadata)
     }
 
     private fun resolveArchive(
@@ -173,11 +225,14 @@ class URLResolver private constructor(
         expectedArchiveHash: String? = null
     ): Resolution {
         // A top-level remote tarball can be extracted as its response streams
-        // in. A normal downloaded file is required when hashing the archive or
-        // when resolving nested archives.
-        if (expectedArchiveHash == null && archive.archiveURI.isRemoteTarball() && parseArchiveURL(archive.archiveURI, 1) == null) {
-            if (!cache.has(HttpResourceCache.cacheKey(identityArchive.archiveURI)))
-                return Resolution(resolveStreamedArchive(archive, identityArchive))
+        // in. A hash lock is checked while reading that response, so it can
+        // use the same extracted cache and HTTP metadata as an unlocked tarball.
+        if (archive.archiveURI.isRemoteTarball() && parseArchiveURL(archive.archiveURI, 1) == null) {
+            if (expectedArchiveHash != null || !cache.has(HttpResourceCache.cacheKey(identityArchive.archiveURI)))
+                return Resolution(
+                    resolveStreamedArchive(archive, identityArchive, expectedArchiveHash),
+                    expectedArchiveHash != null
+                )
             val downloaded = resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
             try {
                 return Resolution(resolveExtractedArchive(archive, downloaded.path))
@@ -185,59 +240,96 @@ class URLResolver private constructor(
                 downloaded.close()
             }
         }
-        val downloaded = resolveArchiveSource(archive, identityArchive)
+        val downloaded = resolveArchiveSource(archive, identityArchive, expectedArchiveHash)
         try {
-            expectedArchiveHash?.let { expected ->
-                val actual = downloaded.path.sha256()
+            if (expectedArchiveHash != null && !downloaded.hashVerified) {
+                val expected = expectedArchiveHash
+                val actual = downloaded.resource.path.sha256()
                 require(actual.equals(expected, ignoreCase = true)) {
                     "SHA-256 mismatch: expected $expected but resolved archive has $actual"
                 }
             }
-            return Resolution(resolveExtractedArchive(archive, downloaded.path), expectedArchiveHash != null)
+            return Resolution(
+                resolveExtractedArchive(archive, downloaded.resource.path, expectedArchiveHash),
+                expectedArchiveHash != null
+            )
         } finally {
-            downloaded.close()
+            downloaded.resource.close()
         }
     }
 
-    private fun resolveExtractedArchive(archive: ArchiveURL, archiveFile: Path): ResolvedURL {
-        val extracted = cache.getAndCustomizeEntry(extractedArchiveCacheKey(archiveFile), rerun = false) { destination ->
+    private fun resolveExtractedArchive(
+        archive: ArchiveURL,
+        archiveFile: Path,
+        verifiedArchiveHash: String? = null
+    ): ResolvedURL {
+        val extracted = cache.getAndCustomizeEntry(
+            extractedArchiveCacheKey(archiveFile, verifiedArchiveHash),
+            rerun = false
+        ) { destination ->
             extractLocalArchive(archiveFile, destination)
             DiskCache.EntryComputationResult()
         }
         return selectArchiveMember(archive, extracted)
     }
 
-    private fun resolveStreamedArchive(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
+    private fun resolveStreamedArchive(
+        archive: ArchiveURL,
+        identityArchive: ArchiveURL,
+        expectedArchiveHash: String? = null
+    ): ResolvedURL {
         val key = streamedArchiveCacheKey(identityArchive.archiveURI)
         val existing = cache.lookup(key)
         // This path bypasses HttpResourceCache, so refresh must bypass both the
         // extracted entry's freshness check and its conditional request headers.
-        if (!refresh && existing != null && streamedArchiveIsFresh(existing.metadata))
+        val cachedHashMatches = expectedArchiveHash != null && existing?.metadata[STREAM_ARCHIVE_HASH] == expectedArchiveHash
+        val cachedRepresentationIsFresh = expectedArchiveHash == null &&
+            existing != null && streamedArchiveIsFresh(existing.metadata)
+        if (!refresh && existing != null && (cachedHashMatches || cachedRepresentationIsFresh))
             return selectArchiveMember(archive, existing)
         val previousMetadata = existing?.metadata.orEmpty()
         val previousDirectory = existing?.directory
         existing?.close()
         val requestHeaders = buildMap {
-            if (!refresh) {
+            // A 304 cannot prove a hash that was not checked when the cached
+            // extraction was created, so force a 200 in that case.
+            if (!refresh && expectedArchiveHash == null) {
                 previousMetadata[STREAM_ETAG]?.let { put("If-None-Match", it) }
                 previousMetadata[STREAM_LAST_MODIFIED]?.let { put("If-Modified-Since", it) }
             }
         }
         val extracted = cache.getAndCustomizeEntry(key, rerun = previousDirectory != null) { destination ->
             val response = transport.get(archive.archiveURI, requestHeaders)
+            val digest = expectedArchiveHash?.let { MessageDigest.getInstance("SHA-256") }
             response.body.use { body ->
+                val archiveBody = digest?.let { NonClosingInputStream(DigestInputStream(body, it)) } ?: body
                 when (response.statusCode) {
                     304 -> {
                         checkNotNull(previousDirectory) { "Received HTTP 304 without cached extraction for ${archive.archiveURI}" }
                         copyDirectory(previousDirectory, destination)
                     }
-                    in 200..299 -> extractStreamingTar(body, destination)
+                    in 200..299 -> extractStreamingTar(archiveBody, destination)
                     else -> throw HttpStatusException(archive.archiveURI, response.statusCode)
                 }
+                if (digest != null)
+                    archiveBody.copyTo(OutputStream.nullOutputStream())
             }
-            DiskCache.EntryComputationResult(metadata = streamedArchiveMetadata(response, previousMetadata))
+            digest?.let { actual ->
+                val actualHash = HexFormat.of().formatHex(actual.digest())
+                require(actualHash.equals(expectedArchiveHash, ignoreCase = true)) {
+                    "SHA-256 mismatch: expected $expectedArchiveHash but resolved archive has $actualHash"
+                }
+            }
+            DiskCache.EntryComputationResult(
+                metadata = streamedArchiveMetadata(response, previousMetadata, expectedArchiveHash)
+            )
         }
         return selectArchiveMember(archive, extracted)
+    }
+
+    /** Keeps the response stream available so a hash lock can consume its complete raw body. */
+    private class NonClosingInputStream(input: InputStream) : FilterInputStream(input) {
+        override fun close() = Unit
     }
 
     private fun copyDirectory(source: Path, destination: Path) {
@@ -276,9 +368,13 @@ class URLResolver private constructor(
         return ResolvedURL(resolvedMember, extracted)
     }
 
-    private fun resolveArchiveSource(archive: ArchiveURL, identityArchive: ArchiveURL): ResolvedURL {
+    private fun resolveArchiveSource(
+        archive: ArchiveURL,
+        identityArchive: ArchiveURL,
+        expectedArchiveHash: String? = null
+    ): Resolution {
         try {
-            return resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
+            return resolveResource(archive.archiveURI, identityArchive.archiveURI, expectedArchiveHash)
         } catch (e: HttpStatusException) {
             if (e.statusCode != 404)
                 throw e
@@ -286,7 +382,7 @@ class URLResolver private constructor(
             // recursive call then resolves and extracts that outer source.
             val outerArchive = parseArchiveURL(archive.archiveURI, 1) ?: throw e
             val identityOuterArchive = parseArchiveURL(identityArchive.archiveURI, 1) ?: invalidArchiveIdentity()
-            return resolveArchive(outerArchive, identityOuterArchive).resource
+            return resolveArchive(outerArchive, identityOuterArchive)
         }
     }
 
@@ -314,8 +410,8 @@ class URLResolver private constructor(
     }
 }
 
-/** The resolved resource and whether an archive hash lock was checked upstream. */
-private data class Resolution(val resource: ResolvedURL, val archiveHashVerified: Boolean = false)
+/** The resolved resource and whether its hash lock was checked upstream. */
+private data class Resolution(val resource: ResolvedURL, val hashVerified: Boolean = false)
 
 internal class MissingArchiveMemberException(message: String) : IllegalArgumentException(message)
 
@@ -461,6 +557,7 @@ private val FAT_BIG_ENDIAN_MAGICS = setOf(0xcafebabeu, 0xcafebabfu)
 private val FAT_LITTLE_ENDIAN_MAGICS = setOf(0xbebafecau, 0xbfbafecau)
 private val IS_MAC_OS = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)
 private const val HTTP_CACHE_CONTROL_METADATA = "http.cache-control"
+private const val HTTP_CONTENT_HASH_METADATA = "http.sha256"
 private val CACHE_CONTROL_COMMENT = Regex("(?:#|//)\\s*Cache-Control:\\s*(.*)", RegexOption.IGNORE_CASE)
 private const val MAX_HASHBANG_HEADER_BYTES = 8192
 
@@ -499,11 +596,11 @@ internal fun Path.sha256(): String {
     return HexFormat.of().formatHex(digest.digest())
 }
 
-internal fun extractedArchiveCacheKey(archive: Path): String = """
+internal fun extractedArchiveCacheKey(archive: Path, contentHash: String? = null): String = """
     Extracted archive
     Layout version: 2
     File name: ${archive.name}
-    SHA-256: ${archive.fingerprint()}
+    SHA-256: ${contentHash ?: archive.fingerprint()}
 """.trimIndent()
 
 internal fun streamedArchiveCacheKey(uri: URI): String = "Streamed extracted archive\nLayout version: 2\nURI: $uri"
@@ -513,10 +610,12 @@ private const val STREAM_CACHE_CONTROL = "stream.cache-control"
 private const val STREAM_ETAG = "stream.etag"
 private const val STREAM_LAST_MODIFIED = "stream.last-modified"
 private const val STREAM_AGE = "stream.age"
+private const val STREAM_ARCHIVE_HASH = "stream.archive-hash"
 
 private fun streamedArchiveMetadata(
     response: HttpTransport.Response,
-    previous: Map<String, String>
+    previous: Map<String, String>,
+    verifiedArchiveHash: String? = null
 ): Map<String, String> = buildMap {
     // A 200 describes a replacement representation; only 304 may inherit
     // metadata that the response did not repeat.
@@ -530,6 +629,7 @@ private fun streamedArchiveMetadata(
     replaceFromHeader("etag", STREAM_ETAG)
     replaceFromHeader("last-modified", STREAM_LAST_MODIFIED)
     replaceFromHeader("age", STREAM_AGE)
+    verifiedArchiveHash?.let { put(STREAM_ARCHIVE_HASH, it) }
 }
 
 private fun streamedArchiveIsFresh(metadata: Map<String, String>): Boolean {
