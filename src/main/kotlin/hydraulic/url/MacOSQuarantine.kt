@@ -10,9 +10,17 @@ import java.lang.foreign.ValueLayout
 import java.lang.invoke.MethodHandle
 import java.nio.file.Path
 
-/** Applies quarantine through Core Foundation's supported URL resource-property API. */
+/** Updates quarantine through Core Foundation's supported URL resource-property API. */
 internal object MacOSQuarantine {
     fun apply(path: Path) {
+        update(path, enabled = true)
+    }
+
+    fun remove(path: Path) {
+        update(path, enabled = false)
+    }
+
+    private fun update(path: Path, enabled: Boolean) {
         Arena.ofConfined().use { arena ->
             val nativePath = arena.allocateFrom(path.toAbsolutePath().toString())
             val fileURL = CF_URL_CREATE_FROM_FILE_SYSTEM_REPRESENTATION.invokeWithArguments(
@@ -21,8 +29,11 @@ internal object MacOSQuarantine {
             check(fileURL != MemorySegment.NULL) { "Core Foundation could not create a file URL for $path" }
 
             try {
-                if (!hasQuarantineProperties(fileURL, arena))
+                val quarantined = hasQuarantineProperties(fileURL, arena)
+                if (enabled && !quarantined)
                     setQuarantineProperties(fileURL, arena)
+                else if (!enabled && quarantined)
+                    removeQuarantineProperties(fileURL, arena)
             } finally {
                 CF_RELEASE.invokeWithArguments(fileURL)
             }
@@ -72,6 +83,14 @@ internal object MacOSQuarantine {
             CF_RELEASE.invokeWithArguments(properties)
             CF_RELEASE.invokeWithArguments(agentName)
         }
+    }
+
+    private fun removeQuarantineProperties(fileURL: MemorySegment, arena: Arena) {
+        val error = arena.allocate(ValueLayout.ADDRESS)
+        val succeeded = (CF_URL_SET_RESOURCE_PROPERTY.invokeWithArguments(
+            fileURL, quarantinePropertiesKey, MemorySegment.NULL, error
+        ) as Byte).toInt() != 0
+        checkSucceeded(succeeded, error, "remove quarantine properties")
     }
 
     private fun cfString(value: String, arena: Arena): MemorySegment {

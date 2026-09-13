@@ -103,7 +103,7 @@ Because of the caching, this means the program at `foobar.com` will keep itself 
 
 URLs can be hash locked by adding `#sha256=....`. A mismatch will cause `url` to exit with an error code and no path is printed.
 
-On macOS `url` marks executables for Gatekeeper checks on first run unless you pass `--no-gatekeeper`. That means programs are expected to be signed, and will be checked by Apple for malware. It's not recommended to override Gatekeeper: signing is cheap and helps keep the macOS ecosystem secure. If you distribute binaries, you have a responsibility to do it. If you don't like the code signing regime Apple maintains, use Linux!
+On macOS `url` marks executables for Gatekeeper checks unless you pass `--no-gatekeeper`. That option also removes quarantine metadata from an already cached executable. Programs are otherwise expected to be signed, and will be checked by Apple for malware. It's not recommended to override Gatekeeper: signing is cheap and helps keep the macOS ecosystem secure. If you distribute binaries, you have a responsibility to do it. If you don't like the code signing regime Apple maintains, use Linux!
 
 ## File lists
 

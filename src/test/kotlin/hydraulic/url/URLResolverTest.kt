@@ -496,17 +496,23 @@ class URLResolverTest {
     fun `macOS Mach-O results receive quarantine unless opted out`() = withServer { server ->
         if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true))
             return@withServer
-        server.createContext("/") { it.respond(bytes(0xfeedfacf.toInt()) + " payload".toByteArray()) }
+        val requests = AtomicInteger()
+        server.createContext("/") { exchange ->
+            requests.incrementAndGet()
+            exchange.responseHeaders.add("Cache-Control", "max-age=3600")
+            exchange.respond(bytes(0xfeedfacf.toInt()) + " payload".toByteArray())
+        }
 
         makeCache().use { cache ->
             URLResolver(cache).resolve(server.uri("/enabled")).use { resolved ->
                 assertContains(resolved.path.macExtendedAttribute("com.apple.quarantine"), ";Hydraulic\\x20URL;")
                 assertFalse("user.com.apple.quarantine" in resolved.path.macExtendedAttributes())
             }
-            URLResolver(cache, gatekeeper = false).resolve(server.uri("/disabled")).use { resolved ->
+            URLResolver(cache, gatekeeper = false).resolve(server.uri("/enabled")).use { resolved ->
                 assertFalse("com.apple.quarantine" in resolved.path.macExtendedAttributes())
             }
         }
+        assertEquals(1, requests.get())
     }
 
     @Test

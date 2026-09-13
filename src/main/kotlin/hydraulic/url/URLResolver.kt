@@ -367,12 +367,15 @@ private fun isMachOContent(prefix: ByteArray): Boolean {
 }
 
 internal fun Path.applyGatekeeperQuarantine(enabled: Boolean) {
-    if (!enabled || !IS_MAC_OS || !isRegularFile())
+    if (!IS_MAC_OS || !isRegularFile())
         return
     val prefix = Files.newInputStream(this).use { it.readNBytes(8) }
     if (!isMachOContent(prefix))
         return
-    MacOSQuarantine.apply(this)
+    if (enabled)
+        MacOSQuarantine.apply(this)
+    else
+        MacOSQuarantine.remove(this)
 }
 
 private fun ByteArray.uint32(offset: Int, littleEndian: Boolean): UInt {
