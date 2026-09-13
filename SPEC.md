@@ -62,6 +62,7 @@ must use HTTP or HTTPS.
 - `-r`, `--refresh`: ignore a cached HTTP response and fetch the resource
   again. The refreshed response replaces the cache entry used by later
   resolutions.
+- `-V`, `--version`: print the build's version and exit successfully.
 - `--progress=json`: emit machine-readable progress as newline-delimited JSON
   objects on standard error. Each progress object must have `"type":
   "progress"`; implementations may add fields, and scripts must ignore fields

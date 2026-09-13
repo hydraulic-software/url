@@ -31,7 +31,12 @@ import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Resolves an HTTP(S) URL to a local path, downloading and revalidating it through a shared disk cache. */
-@Command(name = "url", description = ["Print the cached local path of an HTTP(S) resource."], mixinStandardHelpOptions = true)
+@Command(
+    name = "url",
+    description = ["Print the cached local path of an HTTP(S) resource."],
+    version = [VERSION],
+    mixinStandardHelpOptions = true
+)
 class URL(
     private val stdout: PrintStream = System.out,
     private val stdin: BufferedReader = System.`in`.bufferedReader(),

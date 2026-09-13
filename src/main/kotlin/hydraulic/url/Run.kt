@@ -17,6 +17,7 @@ import kotlin.io.path.exists
 @Command(
     name = "run",
     description = ["Resolve and execute a URL or local run.zip.d directory."],
+    version = [VERSION],
     mixinStandardHelpOptions = true
 )
 class Run(

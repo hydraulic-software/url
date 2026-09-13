@@ -840,6 +840,22 @@ class URLResolverTest {
     }
 
     @Test
+    fun `command line reports its version`() {
+        val output = StringWriter()
+        val error = StringWriter()
+        val command = commandLine().setOut(PrintWriter(output)).setErr(PrintWriter(error))
+
+        assertEquals(0, command.execute("-V"))
+        assertEquals("$VERSION\n", output.toString())
+        assertEquals("", error.toString())
+
+        val runOutput = StringWriter()
+        val run = commandLine("run").setOut(PrintWriter(runOutput))
+        assertEquals(0, run.execute("--version"))
+        assertEquals("$VERSION\n", runOutput.toString())
+    }
+
+    @Test
     fun `zsh setup is bounded idempotent and preserves user configuration`() {
         val zshrc = tempDir / ".zshrc"
         zshrc.writeText("export USER_SETTING=kept\n")
