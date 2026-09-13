@@ -58,7 +58,18 @@ graalvmNative {
             )
         })
         jvmArgs(application.applicationDefaultJvmArgs)
+        providers.gradleProperty("nativePgoProfile").orNull?.let { buildArgs.add("--pgo=$it") }
+        if (providers.gradleProperty("nativePgoInstrument").isPresent) buildArgs.add("--pgo-instrument")
     }
+}
+
+tasks.register<JavaExec>("pgoTrainingData") {
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("hydraulic.url.PgoTrainingDataKt")
+    argumentProviders.add(CommandLineArgumentProvider {
+        listOf(providers.gradleProperty("pgoTrainingDirectory").get())
+    })
 }
 
 tasks.register("nativePair") {

@@ -34,11 +34,11 @@ jobs:
       - uses: graalvm/setup-graalvm@v1
         with:
           java-version: '25'
-          distribution: graalvm-community
+          distribution: graalvm
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: gradle
       - name: Test and compile native binaries
-        run: ./gradlew test nativePair --no-daemon
+        run: ./gradlew test --no-daemon && ./scripts/build-native-pgo.sh
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
