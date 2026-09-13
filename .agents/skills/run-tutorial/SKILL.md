@@ -37,7 +37,7 @@ Let's see what's inside:
 
 ```shell
 $ cat run.sh
-VER=${VER:2.0.4}
+VER=${VER:-2.0.4}
 case $OS in
   linux) p=$(url https://github.com/Code-Hex/Neo-cowsay/releases/download/v$VER/cowsay_$VER_Linux_$ARCH.tar.gz/cowsay) && exec "$p" $@
   macos) p=$(url https://github.com/Code-Hex/Neo-cowsay/releases/download/v$VER/cowsay_$VER_macOS_$ARCH.tar.gz/cowsay) && exec "$p" $@
@@ -45,7 +45,7 @@ case $OS in
 fi
 ```
 
-There's no shebang line because this script isn't executed directly, it's sourced into a pre-prepared shell environment that defines some variables and functions. Scripts can be tested by passing a directory to `run` instead of a URL: `run ./run.zip.d --help`.
+There's no shebang line because this script isn't executed directly. It is sourced into a pre-prepared POSIX shell with `errexit` enabled. The wrapper defines unexported runscript variables and a `url` function that inherits resolver flags passed to `run`; they do not leak into the final program unless the runscript exports them. Scripts can be tested by passing a directory to `run` instead of a URL: `run ./run.zip.d --help`.
 
 The `VER` variable might be set if the user invoked the program using `@1.2.3` syntax, like this: `run example.com@1.2.3` or `run example.com/someapp@v7-beta`. If it's not, the first line sets it to the current version.
 

@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-$version = if ($env:VER) { $env:VER } else { "0.14.0" }
-$arch = $env:ARCH
+$version = if ($VER) { $VER } else { "0.14.0" }
+$arch = $ARCH
 
 if ($arch -notin @("x86_64", "x64")) {
     Write-Error "cel-verifier: unsupported Windows architecture $arch"

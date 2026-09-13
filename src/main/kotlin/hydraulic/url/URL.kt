@@ -156,8 +156,10 @@ internal fun parseURLInput(input: String): URLInput {
 
 internal fun posixShellAssignment(variable: String, value: String): String {
     require(SHELL_VARIABLE.matches(variable)) { "Invalid shell variable name: $variable" }
-    return "$variable='${value.replace("'", "'\"'\"'")}'"
+    return "$variable=${posixShellQuote(value)}"
 }
+
+internal fun posixShellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
 private val SHELL_VARIABLE = Regex("[A-Za-z_][A-Za-z0-9_]*")
 

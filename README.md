@@ -116,6 +116,12 @@ Windows, and forwards all remaining arguments:
 $ run ./run.zip.d --help
 ```
 
+`run.sh` is sourced by a POSIX shell wrapper with `errexit` enabled. The
+wrapper provides unexported `OS`, `ARCH`, and optional `VER` variables, plus a
+`url` function that inherits flags such as `--refresh`, `--progress`, and
+`--cache-dir` from `run`. These launcher-only values do not leak into the final
+program unless the runscript explicitly exports them.
+
 `run.zip` can contain anything but it's conventional and strongly recommended that:
 
 * It be small. This is a stub script, not the full program.

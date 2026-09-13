@@ -68,9 +68,10 @@ class Run(
         }
 
         val target = parseRunTarget(requireNotNull(url) { "A URL or local directory is required" })
-        val runEnvironment = runEnvironment(environment, operatingSystem, architecture, target.version)
+        val runScript = RunScriptContext(operatingSystem, architecture, target.version, nestedURLArguments())
+        val runEnvironment = runEnvironment(environment)
         localRunScript(target.locator, windows)?.let { script ->
-            return runLocalScript(script, arguments, windows, runEnvironment)
+            return runResolvedPath(script, arguments, windows, runEnvironment, runScript)
         }
         val uri = runTargetURI(parseURL(target.locator), windows)
         val tracker = progressTracker(progress, System.err, environment, ::isStderrInteractive)
@@ -83,16 +84,37 @@ class Run(
                     minimumFreeSpace
                 ) { Files.getFileStore(cacheDirectory).usableSpace }
                 URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh, transport = transport).resolve(uri).use { resolved ->
-                    return runResolvedPath(resolved.path.toAbsolutePath(), arguments, windows, runEnvironment)
+                    return runResolvedPath(resolved.path.toAbsolutePath(), arguments, windows, runEnvironment, runScript)
                 }
             }
         } finally {
             (tracker as? AutoCloseable)?.close()
         }
     }
+
+    private fun nestedURLArguments(): List<String> = buildList {
+        add("--cache-dir=$cacheDirectory")
+        add("--progress=$progress")
+        add("--cache-limit=${downloadPolicy.cacheLimitGB}")
+        if (refresh)
+            add("--refresh")
+        if (noGatekeeper)
+            add("--no-gatekeeper")
+        downloadPolicy.minimumFreeSpaceMB?.let { add("--min-free-space=$it") }
+        downloadPolicy.legacyMinimumFreeSpaceGB?.let { add("--cache-free-space-limit=$it") }
+        if (downloadPolicy.skipCacheLock)
+            add("--skip-cache-lock")
+    }
 }
 
 internal data class RunTarget(val locator: String, val version: String?)
+
+internal data class RunScriptContext(
+    val operatingSystem: String,
+    val architecture: String,
+    val version: String?,
+    val urlArguments: List<String> = emptyList()
+)
 
 internal fun parseRunTarget(target: String): RunTarget {
     val suffixStart = listOf(target.indexOf('?'), target.indexOf('#')).filter { it >= 0 }.minOrNull() ?: target.length
@@ -125,18 +147,10 @@ internal fun runArchitecture(architecture: String = System.getProperty("os.arch"
         else -> architecture.lowercase(Locale.ROOT)
     }
 
-internal fun runEnvironment(
-    inherited: Map<String, String>,
-    operatingSystem: String,
-    architecture: String,
-    version: String?
-): Map<String, String> = inherited.toMutableMap().apply {
-    this["OS"] = operatingSystem
-    this["ARCH"] = architecture
-    if (version == null)
-        remove("VER")
-    else
-        this["VER"] = version
+internal fun runEnvironment(inherited: Map<String, String>): Map<String, String> = inherited.toMutableMap().apply {
+    remove("OS")
+    remove("ARCH")
+    remove("VER")
 }
 
 internal fun localRunScript(target: String, windows: Boolean): Path? {
@@ -144,12 +158,6 @@ internal fun localRunScript(target: String, windows: Boolean): Path? {
     val script = directory.resolve(if (windows) "run.ps1" else "run.sh").toAbsolutePath()
     require(Files.isRegularFile(script)) { "Local run directory does not contain ${script.fileName}: $directory" }
     return script
-}
-
-private fun runLocalScript(path: Path, arguments: List<String>, windows: Boolean, environment: Map<String, String>): Int {
-    if (windows)
-        return runResolvedPath(path, arguments, windows = true, environment = environment)
-    return runProcess(listOf("sh", path.toString()) + arguments, environment)
 }
 
 internal fun runTargetURI(uri: URI, windows: Boolean): URI {
@@ -180,14 +188,59 @@ internal fun runResolvedPath(
     path: Path,
     arguments: List<String>,
     windows: Boolean,
-    environment: Map<String, String> = System.getenv()
+    environment: Map<String, String> = System.getenv(),
+    runScript: RunScriptContext? = null
 ): Int {
-    val command = if (windows && path.fileName.toString().endsWith(".ps1", ignoreCase = true))
-        listOf("powershell.exe", "-NoProfile", "-File", path.toString()) + arguments
-    else
-        listOf(path.toString()) + arguments
+    val command = when {
+        runScript != null && windows && path.fileName.toString().endsWith(".ps1", ignoreCase = true) ->
+            listOf("powershell.exe", "-NoProfile", "-Command", powerShellRunWrapper(path, arguments, runScript))
+        runScript != null && !windows && path.fileName.toString() == "run.sh" ->
+            listOf("sh", "-c", posixRunWrapper(path, runScript), path.toString()) + arguments
+        windows && path.fileName.toString().endsWith(".ps1", ignoreCase = true) ->
+            listOf("powershell.exe", "-NoProfile", "-File", path.toString()) + arguments
+        else -> listOf(path.toString()) + arguments
+    }
     return runProcess(command, environment)
 }
+
+internal fun posixRunWrapper(path: Path, context: RunScriptContext): String = buildString {
+    appendLine("set -e")
+    appendLine(posixShellAssignment("OS", context.operatingSystem))
+    appendLine(posixShellAssignment("ARCH", context.architecture))
+    context.version?.let { appendLine(posixShellAssignment("VER", it)) }
+    appendLine("url() {")
+    append("  command url")
+    context.urlArguments.forEach {
+        append(' ')
+        append(posixShellQuote(it))
+    }
+    appendLine(" \"${'$'}@\"")
+    appendLine("}")
+    append(". ")
+    append(posixShellQuote(path.toString()))
+}
+
+internal fun powerShellRunWrapper(path: Path, arguments: List<String>, context: RunScriptContext): String = buildString {
+    appendLine("${'$'}ErrorActionPreference = 'Stop'")
+    appendLine("${'$'}OS = ${powerShellQuote(context.operatingSystem)}")
+    appendLine("${'$'}ARCH = ${powerShellQuote(context.architecture)}")
+    context.version?.let { appendLine("${'$'}VER = ${powerShellQuote(it)}") }
+    appendLine("${'$'}runUrlCommand = (Get-Command url -CommandType Application).Source")
+    append("function url { & ${'$'}runUrlCommand")
+    context.urlArguments.forEach {
+        append(' ')
+        append(powerShellQuote(it))
+    }
+    appendLine(" @args }")
+    append(". ")
+    append(powerShellQuote(path.toString()))
+    arguments.forEach {
+        append(' ')
+        append(powerShellQuote(it))
+    }
+}
+
+internal fun powerShellQuote(value: String): String = "'${value.replace("'", "''")}'"
 
 private fun runProcess(command: List<String>, environment: Map<String, String>): Int =
     ProcessBuilder(command).apply {

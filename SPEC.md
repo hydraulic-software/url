@@ -136,18 +136,29 @@ resolution and execute `run.sh` from that directory on Unix-like systems or
 `run.ps1` on Windows. The Unix startup script does not need a shebang or
 executable permission. Remaining operands are passed to it unchanged.
 
-Before executing a startup script, `run` must set `OS` and `ARCH` in its
-environment. `OS` must be `linux`, `macos`, `android`, `freebsd`, or `windows`
-on those systems. `ARCH` must be `x86_64` on x86-64 systems and `arm64` on
-AArch64 systems. Implementations may define stable lowercase values for other
-systems and architectures; scripts must reject values they do not support.
+On Unix-like systems, `run` must start a POSIX shell wrapper that enables
+`errexit`, defines `OS` and `ARCH` as unexported shell variables, defines the
+runscript utility API, and dot-sources `run.sh`. On Windows it must provide the
+analogous variables and utilities while dot-sourcing `run.ps1` in PowerShell.
+These variables and utilities must not propagate to a program launched by the
+runscript unless the runscript explicitly exports them.
+
+`OS` must be `linux`, `macos`, `android`, `freebsd`, or `windows` on those
+systems. `ARCH` must be `x86_64` on x86-64 systems and `arm64` on AArch64
+systems. Implementations may define stable lowercase values for other systems
+and architectures; scripts must reject values they do not support.
 
 A non-empty `@VERSION` suffix on the locator, before any query or fragment,
 must be removed before local lookup or URL resolution and exposed to the
 startup script as `VER=VERSION`. For example, `run example.com/tool@1.2.3`
-resolves `example.com/tool` with `VER=1.2.3`. If there is no version suffix,
-`run` must remove any inherited `VER` value from the startup environment.
-`run` must override inherited `OS` and `ARCH` values with its normalized ones.
+resolves `example.com/tool` with the shell variable `VER=1.2.3`. If there is no
+version suffix, `VER` must be unset. `run` must remove inherited `OS`, `ARCH`,
+and `VER` environment values before starting the wrapper.
+
+The runscript utility API must include a shell function named `url`. It must
+invoke the real `url` command with `run`'s cache directory, refresh, progress,
+Gatekeeper, and download-policy settings as defaults, followed by the
+runscript's arguments unchanged. The function itself must not be exported.
 
 `run --install` must ensure that sibling `run` and `url` command names refer to
 hard links of the same executable and install the optional shell integration.

@@ -916,16 +916,9 @@ class URLResolverTest {
     }
 
     @Test
-    fun `runscript environment overrides platform values and only exposes requested version`() {
+    fun `runscript process environment removes contract variables`() {
         val inherited = mapOf("PATH" to "/bin", "OS" to "wrong", "ARCH" to "wrong", "VER" to "stale")
-        assertEquals(
-            mapOf("PATH" to "/bin", "OS" to "linux", "ARCH" to "arm64", "VER" to "2.0.4"),
-            runEnvironment(inherited, "linux", "arm64", "2.0.4")
-        )
-        assertEquals(
-            mapOf("PATH" to "/bin", "OS" to "macos", "ARCH" to "x86_64"),
-            runEnvironment(inherited, "macos", "x86_64", null)
-        )
+        assertEquals(mapOf("PATH" to "/bin"), runEnvironment(inherited))
     }
 
     @Test
@@ -948,7 +941,10 @@ class URLResolverTest {
         val directory = (tempDir / "run.zip.d").createDirectories()
         val output = tempDir / "local-arguments"
         (directory / "run.sh").writeText(
-            "printf '%s\\n' \"${'$'}OS\" \"${'$'}ARCH\" \"${'$'}{VER-unset}\" \"${'$'}@\" > '${output}'\n"
+            """
+            printf '%s\n' "${'$'}OS" "${'$'}ARCH" "${'$'}{VER-unset}" "${'$'}@" > '${output}'
+            sh -c 'printf "%s\n" "${'$'}{OS-unset}" "${'$'}{ARCH-unset}" "${'$'}{VER-unset}"' >> '${output}'
+            """.trimIndent()
         )
         val run = Run(
             executablePath = { tempDir / "run" },
@@ -962,7 +958,58 @@ class URLResolverTest {
             .execute("${directory}@v7-beta", "--help", "two words")
 
         assertEquals(0, exitCode)
-        assertEquals("linux\narm64\nv7-beta\n--help\ntwo words\n", output.readText())
+        assertEquals("linux\narm64\nv7-beta\n--help\ntwo words\nunset\nunset\nunset\n", output.readText())
+    }
+
+    @Test
+    fun `runscript exits on the first failed command by default`() {
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+            return
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val reached = tempDir / "reached"
+        (directory / "run.sh").writeText("false\nprintf reached > '${reached}'\n")
+        val run = Run(executablePath = { tempDir / "run" }, windows = false)
+
+        assertEquals(1, CommandLine(run).setStopAtPositional(true).execute(directory.toString()))
+        assertFalse(Files.exists(reached))
+    }
+
+    @Test
+    fun `runscript url function inherits resolver options and preserves its arguments`() {
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+            return
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val bin = (tempDir / "bin").createDirectories()
+        val output = tempDir / "url-arguments"
+        (directory / "run.sh").writeText("url child=example.com/file > /dev/null\n")
+        (bin / "url").apply {
+            writeText("#!/bin/sh\nprintf '%s\\n' \"${'$'}@\" > '${output}'\n")
+            toFile().setExecutable(true)
+        }
+        val run = Run(
+            executablePath = { tempDir / "run" },
+            windows = false,
+            environment = System.getenv() + ("PATH" to "$bin:${System.getenv("PATH")}"),
+            operatingSystem = "linux",
+            architecture = "arm64"
+        )
+        val cache = tempDir / "custom-cache"
+
+        val exitCode = CommandLine(run).setStopAtPositional(true).execute(
+            "--cache-dir", cache.toString(),
+            "--refresh",
+            "--progress=plain",
+            "--min-free-space=12",
+            "--cache-limit=2.5",
+            directory.toString()
+        )
+
+        assertEquals(0, exitCode)
+        assertEquals(
+            "--cache-dir=$cache\n--progress=plain\n--cache-limit=2.5\n--refresh\n" +
+                "--min-free-space=12\nchild=example.com/file\n",
+            output.readText()
+        )
     }
 
     @Test
