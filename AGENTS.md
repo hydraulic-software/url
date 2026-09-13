@@ -19,17 +19,24 @@ executes remote tools. The script-facing compatibility contract is defined in
 
 ## Build and test
 
-Use the Gradle wrapper from the repository root:
+Use the Gradle wrapper from the repository root for JVM builds and tests:
 
 ```sh
 ./gradlew test
 ./gradlew run --args='https://example.com'
-./gradlew nativeCompile
-./gradlew nativePair
 ```
 
-The standalone build uses JDK 25. Native-image tasks require GraalVM Community
-for Java 25. Prefer focused tests while iterating:
+Use the repository-root `./build.sh` launcher for native-image tasks:
+
+```sh
+./build.sh nativeCompile
+./build.sh nativePair
+```
+
+The standalone build uses JDK 25 and does not provision Java toolchains through
+Gradle. When `url` is available, `build.sh` resolves Oracle GraalVM 25, sets it
+as the only Gradle Java installation, and disables toolchain auto-detection.
+Prefer focused tests while iterating:
 
 ```sh
 ./gradlew test --tests hydraulic.url.URLResolverTest

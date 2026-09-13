@@ -25,15 +25,12 @@ import java.io.StringWriter
 import java.io.ByteArrayInputStream
 import java.net.InetSocketAddress
 import java.net.URI
-import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
-import java.nio.file.attribute.UserDefinedFileAttributeView
-import java.time.Instant
-import java.util.UUID
+import java.util.HexFormat
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -483,17 +480,6 @@ class URLResolverTest {
     }
 
     @Test
-    fun `quarantine provenance has the macOS download format`() {
-        assertEquals(
-            "0081;5f5e100;Hydraulic URL;12345678-1234-1234-1234-123456789abc",
-            gatekeeperQuarantineValue(
-                Instant.ofEpochSecond(100_000_000),
-                UUID.fromString("12345678-1234-1234-1234-123456789abc")
-            )
-        )
-    }
-
-    @Test
     fun `macOS Mach-O results receive quarantine unless opted out`() = withServer { server ->
         if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true))
             return@withServer
@@ -501,13 +487,27 @@ class URLResolverTest {
 
         makeCache().use { cache ->
             URLResolver(cache).resolve(server.uri("/enabled")).use { resolved ->
-                assertContains(resolved.path.userAttribute("com.apple.quarantine"), ";Hydraulic URL;")
+                assertContains(resolved.path.macExtendedAttribute("com.apple.quarantine"), ";Hydraulic\\x20URL;")
+                assertFalse("user.com.apple.quarantine" in resolved.path.macExtendedAttributes())
             }
             URLResolver(cache, gatekeeper = false).resolve(server.uri("/disabled")).use { resolved ->
-                val attributes = Files.getFileAttributeView(resolved.path, UserDefinedFileAttributeView::class.java)
-                assertFalse("com.apple.quarantine" in attributes.list())
+                assertFalse("com.apple.quarantine" in resolved.path.macExtendedAttributes())
             }
         }
+    }
+
+    @Test
+    fun `macOS quarantine metadata is not replaced`() {
+        if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true))
+            return
+        val file = tempDir / "already-quarantined"
+        val existing = "0081;5f5e100;Existing;12345678-1234-1234-1234-123456789abc"
+        file.writeBytes(bytes(0xfeedfacf.toInt()) + " payload".toByteArray())
+        xattr("-w", "com.apple.quarantine", existing, file.toString())
+
+        file.applyGatekeeperQuarantine(enabled = true)
+
+        assertEquals(existing, file.macExtendedAttribute("com.apple.quarantine"))
     }
 
     @Test
@@ -568,6 +568,71 @@ class URLResolverTest {
         }
 
         assertEquals(2, requests.get())
+    }
+
+    @Test
+    fun `cache entry missing its content directory is rebuilt`() = withServer { server ->
+        val requests = AtomicInteger()
+        server.createContext("/") { exchange ->
+            requests.incrementAndGet()
+            exchange.respond("download".toByteArray())
+        }
+
+        makeCache().use { cache ->
+            val uri = server.uri("/missing-content")
+            URLResolver(cache).resolve(uri).use { assertEquals("download", it.path.readText()) }
+            val content = cache.lookup(HttpResourceCache.cacheKey(uri))!!.use { it.directory }
+            assertTrue(content.toFile().deleteRecursively())
+
+            URLResolver(cache).resolve(uri).use { assertEquals("download", it.path.readText()) }
+        }
+
+        assertEquals(2, requests.get())
+    }
+
+    @Test
+    fun `cache entry missing its downloaded file is rebuilt`() = withServer { server ->
+        val requests = AtomicInteger()
+        server.createContext("/") { exchange ->
+            requests.incrementAndGet()
+            exchange.responseHeaders.add("Cache-Control", "max-age=3600")
+            exchange.respond("download".toByteArray())
+        }
+
+        makeCache().use { cache ->
+            val uri = server.uri("/missing-file")
+            val downloaded = URLResolver(cache).resolve(uri).use { it.path }
+            assertTrue(Files.deleteIfExists(downloaded))
+
+            URLResolver(cache).resolve(uri).use { assertEquals("download", it.path.readText()) }
+        }
+
+        assertEquals(2, requests.get())
+    }
+
+    @Test
+    fun `cache entry missing an extracted archive member is rebuilt`() = withServer { server ->
+        val archiveRequests = AtomicInteger()
+        val zip = zipOf("tool-1.0/bin/tool" to "archive member")
+        server.createContext("/") { exchange ->
+            if (exchange.requestURI.path == "/tool.zip") {
+                archiveRequests.incrementAndGet()
+                exchange.responseHeaders.add("Cache-Control", "max-age=3600")
+                exchange.respond(zip)
+            } else {
+                exchange.respond404()
+            }
+        }
+
+        makeCache().use { cache ->
+            val uri = server.uri("/tool.zip/bin/tool")
+            val member = URLResolver(cache).resolve(uri).use { it.path }
+            assertTrue(Files.deleteIfExists(member))
+
+            URLResolver(cache).resolve(uri).use { assertEquals("archive member", it.path.readText()) }
+        }
+
+        assertEquals(2, archiveRequests.get())
     }
 
     @Test
@@ -959,11 +1024,18 @@ class URLResolverTest {
         value.toByte()
     )
 
-    private fun Path.userAttribute(name: String): String {
-        val attributes = Files.getFileAttributeView(this, UserDefinedFileAttributeView::class.java)
-        val buffer = ByteBuffer.allocate(attributes.size(name))
-        attributes.read(name, buffer)
-        buffer.flip()
-        return StandardCharsets.UTF_8.decode(buffer).toString()
+    private fun Path.macExtendedAttributes(): Set<String> =
+        xattr(toString()).lineSequence().filter(String::isNotEmpty).toSet()
+
+    private fun Path.macExtendedAttribute(name: String): String {
+        val hex = xattr("-px", name, toString()).filterNot(Char::isWhitespace)
+        return HexFormat.of().parseHex(hex).toString(StandardCharsets.UTF_8)
+    }
+
+    private fun xattr(vararg arguments: String): String {
+        val process = ProcessBuilder("/usr/bin/xattr", *arguments).redirectErrorStream(true).start()
+        val output = process.inputStream.readAllBytes().toString(StandardCharsets.UTF_8)
+        assertEquals(0, process.waitFor(), output)
+        return output
     }
 }

@@ -1,6 +1,7 @@
 package hydraulic.url
 
 import dev.progress4j.api.ProgressReport
+import hydraulic.diskcache.CacheEntryComputation
 import hydraulic.diskcache.DiskCache
 import hydraulic.diskcache.http.HttpResourceCache
 import hydraulic.diskcache.http.HttpStatusException
@@ -8,42 +9,72 @@ import hydraulic.diskcache.http.HttpTransport
 import hydraulic.diskcache.http.JdkHttpTransport
 import hydraulic.archives.extractLocalArchive
 import hydraulic.utils.hashing.fingerprint
+import java.io.IOException
 import java.net.URI
-import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
-import java.nio.file.attribute.UserDefinedFileAttributeView
 import java.security.MessageDigest
 import java.time.Instant
 import java.time.Duration
 import java.util.HexFormat
-import java.util.UUID
 import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 
 /** Resolves ordinary HTTP resources and paths within remotely hosted archives. */
-class URLResolver(
-    private val cache: DiskCache,
-    progressTracker: ProgressReport.Tracker? = null,
+class URLResolver private constructor(
+    cache: DiskCache,
+    private val progressTracker: ProgressReport.Tracker?,
     private val gatekeeper: Boolean = true,
     private val transport: HttpTransport = UserAgentHttpTransport(),
-    refresh: Boolean = false,
-    private val resources: HttpResourceCache = HttpResourceCache(
-        if (refresh) RefreshingDiskCache(cache) else cache,
+    refresh: Boolean,
+    private val retryDamagedCacheEntry: Boolean
+) {
+    constructor(
+        cache: DiskCache,
+        progressTracker: ProgressReport.Tracker? = null,
+        gatekeeper: Boolean = true,
+        transport: HttpTransport = UserAgentHttpTransport(),
+        refresh: Boolean = false
+    ) : this(cache, progressTracker, gatekeeper, transport, refresh, retryDamagedCacheEntry = true)
+
+    private val sourceCache = cache
+    private val cache = CompleteEntryDiskCache(cache)
+    private val resources = HttpResourceCache(
+        if (refresh) RefreshingDiskCache(this.cache) else this.cache,
         transport = transport,
         progressTracker = progressTracker
     )
-) {
+
     fun resolve(uri: URI, cacheIdentity: URI = uri): ResolvedURL {
+        try {
+            return resolveOnce(uri, cacheIdentity)
+        } catch (e: DamagedCacheEntryException) {
+            if (!retryDamagedCacheEntry)
+                throw IOException("Cache entry is still incomplete after rebuilding it", e)
+            return URLResolver(
+                ForceRebuildDiskCache(sourceCache),
+                progressTracker,
+                gatekeeper,
+                transport,
+                refresh = false,
+                retryDamagedCacheEntry = false
+            ).resolve(uri, cacheIdentity)
+        }
+    }
+
+    private fun resolveOnce(uri: URI, cacheIdentity: URI): ResolvedURL {
         val expectedHash = sha256Lock(uri)
         val resolved = resolveWithoutHashLock(uri.withoutFragment(), cacheIdentity.withoutFragment())
         try {
+            if (!resolved.path.exists())
+                damagedCacheEntry(resolved, "resolved content disappeared")
             if (expectedHash != null) {
                 require(resolved.path.isRegularFile()) { "SHA-256 locking requires a file result" }
                 val actualHash = resolved.path.sha256()
@@ -80,7 +111,7 @@ class URLResolver(
 
     private fun resolveResource(uri: URI, cacheIdentity: URI): DiskCache.OpenedEntry {
         val entry = resources.resolve(uri, cacheIdentity)
-        val file = entry.directory.listDirectoryEntries().single()
+        val file = entry.singleFile()
         val policy = file.hashbangCachePolicy() ?: return entry
         if (entry.metadata[HTTP_CACHE_CONTROL_METADATA] == policy)
             return entry
@@ -122,8 +153,9 @@ class URLResolver(
     }
 
     private fun resolveExtractedArchive(archive: ArchiveURL, archiveFile: Path): ResolvedURL {
-        val extracted = cache.get(extractedArchiveCacheKey(archiveFile)) { destination ->
+        val extracted = cache.getAndCustomizeEntry(extractedArchiveCacheKey(archiveFile), rerun = false) { destination ->
             extractLocalArchive(archiveFile, destination, skipSingleRoot = true)
+            DiskCache.EntryComputationResult()
         }
         return selectArchiveMember(archive, extracted)
     }
@@ -170,10 +202,16 @@ class URLResolver(
     }
 
     private fun selectArchiveMember(archive: ArchiveURL, extracted: DiskCache.OpenedEntry): ResolvedURL {
-        val extractedRoot = extracted.directory.toRealPath()
+        val extractedRoot = try {
+            extracted.directory.toRealPath()
+        } catch (e: IOException) {
+            damagedCacheEntry(extracted, "extracted archive directory disappeared", e)
+        }
         val selected = archive.member.fold(extractedRoot) { path, component -> path.resolve(component) }.normalize()
         if (!selected.startsWith(extractedRoot) || !selected.exists()) {
             extracted.close()
+            if (retryDamagedCacheEntry)
+                throw DamagedCacheEntryException("archive member disappeared from the cache")
             throw IllegalArgumentException("Archive member does not exist: ${archive.member.joinToString("/")}")
         }
         val resolvedMember = selected.toRealPath()
@@ -199,8 +237,28 @@ class URLResolver(
     private fun invalidArchiveIdentity(): Nothing =
         throw IllegalArgumentException("Archive member URLs require a matching archive-shaped --cache-key-url")
 
-    private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(directory.listDirectoryEntries().single(), this)
+    private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(singleFile(), this)
+
+    private fun DiskCache.OpenedEntry.singleFile(): Path {
+        val files = try {
+            directory.listDirectoryEntries()
+        } catch (e: IOException) {
+            damagedCacheEntry(this, "content directory disappeared", e)
+        }
+        if (files.size != 1)
+            damagedCacheEntry(this, "expected one cached file but found ${files.size}")
+        return files.single()
+    }
+
+    private fun damagedCacheEntry(entry: AutoCloseable, detail: String, cause: Throwable? = null): Nothing {
+        runCatching { entry.close() }
+        if (retryDamagedCacheEntry)
+            throw DamagedCacheEntryException(detail, cause)
+        throw IOException("Cache entry is incomplete after rebuilding it: $detail", cause)
+    }
 }
+
+private class DamagedCacheEntryException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
 /** Makes the HTTP cache observe an existing entry as a metadata-free miss while preserving its lease and atomic replacement. */
 private class RefreshingDiskCache(private val delegate: DiskCache) : DiskCache by delegate {
@@ -209,6 +267,45 @@ private class RefreshingDiskCache(private val delegate: DiskCache) : DiskCache b
     private class UncachedEntry(private val delegate: DiskCache.OpenedEntry) : DiskCache.OpenedEntry by delegate {
         override val metadata: Map<String, String> = emptyMap()
     }
+}
+
+/** Treats cache entries whose mandatory content directory vanished as misses and rebuilds them. */
+private class CompleteEntryDiskCache(private val delegate: DiskCache) : DiskCache by delegate {
+    override fun lookup(key: String): DiskCache.OpenedEntry? = delegate.lookup(key)?.ifComplete()
+
+    override fun has(key: String): Boolean = lookup(key)?.use { true } ?: false
+
+    override fun getAndCustomizeEntry(
+        key: String,
+        rerun: Boolean,
+        block: CacheEntryComputation
+    ): DiskCache.OpenedEntry {
+        val entry = delegate.getAndCustomizeEntry(key, rerun, block)
+        if (entry.directory.isDirectory())
+            return entry
+        entry.close()
+        return delegate.getAndCustomizeEntry(key, rerun = true, block)
+    }
+
+    private fun DiskCache.OpenedEntry.ifComplete(): DiskCache.OpenedEntry? {
+        if (directory.isDirectory())
+            return this
+        close()
+        return null
+    }
+}
+
+/** Makes every cache lookup in a retried resolution rebuild and atomically replace its existing entry. */
+private class ForceRebuildDiskCache(private val delegate: DiskCache) : DiskCache by delegate {
+    override fun lookup(key: String): DiskCache.OpenedEntry? = null
+
+    override fun has(key: String): Boolean = false
+
+    override fun getAndCustomizeEntry(
+        key: String,
+        rerun: Boolean,
+        block: CacheEntryComputation
+    ): DiskCache.OpenedEntry = delegate.getAndCustomizeEntry(key, rerun = true, block)
 }
 
 internal fun Path.hashbangCachePolicy(): String? {
@@ -275,17 +372,8 @@ internal fun Path.applyGatekeeperQuarantine(enabled: Boolean) {
     val prefix = Files.newInputStream(this).use { it.readNBytes(8) }
     if (!isMachOContent(prefix))
         return
-    val attributes = Files.getFileAttributeView(this, UserDefinedFileAttributeView::class.java) ?: return
-    if (QUARANTINE_ATTRIBUTE in attributes.list())
-        return
-    val value = gatekeeperQuarantineValue().toByteArray(StandardCharsets.UTF_8)
-    attributes.write(QUARANTINE_ATTRIBUTE, ByteBuffer.wrap(value))
+    MacOSQuarantine.apply(this)
 }
-
-internal fun gatekeeperQuarantineValue(
-    instant: Instant = Instant.now(),
-    id: UUID = UUID.randomUUID()
-): String = "0081;${instant.epochSecond.toString(16)};Hydraulic URL;$id"
 
 private fun ByteArray.uint32(offset: Int, littleEndian: Boolean): UInt {
     val bytes = if (littleEndian) (offset + 3 downTo offset) else (offset..offset + 3)
@@ -307,7 +395,6 @@ private val THIN_MACH_O_MAGICS = setOf(
 
 private val FAT_BIG_ENDIAN_MAGICS = setOf(0xcafebabeu, 0xcafebabfu)
 private val FAT_LITTLE_ENDIAN_MAGICS = setOf(0xbebafecau, 0xbfbafecau)
-private const val QUARANTINE_ATTRIBUTE = "com.apple.quarantine"
 private val IS_MAC_OS = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)
 private const val HTTP_CACHE_CONTROL_METADATA = "http.cache-control"
 private val CACHE_CONTROL_COMMENT = Regex("(?:#|//)\\s*Cache-Control:\\s*(.*)", RegexOption.IGNORE_CASE)
