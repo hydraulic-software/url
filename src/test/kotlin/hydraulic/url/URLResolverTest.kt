@@ -244,7 +244,7 @@ class URLResolverTest {
     fun `parallel progress aggregates child sizes into the parent report`() {
         val reports = mutableListOf<dev.progress4j.api.ProgressReport>()
         val progress = ParallelURLProgress(
-            listOf("https://example.com/first", "http://example.com/second")
+            listOf("https://example.com/releases/tool.zip/bin/tool", "http://example.com/second")
         ) { reports += it }
 
         progress.tracker(1)!!.report(dev.progress4j.api.ProgressReport.create(
@@ -258,7 +258,7 @@ class URLResolverTest {
         assertEquals(30, downloading.expectedTotal)
         assertEquals(15, downloading.completed)
         assertEquals(dev.progress4j.api.ProgressReport.Units.BYTES, downloading.units)
-        assertEquals(listOf("first", "second"), downloading.subReports.map { it!!.message })
+        assertEquals(listOf("tool.zip/bin/tool", "second"), downloading.subReports.map { it!!.message })
 
         progress.complete(0)
         progress.complete(1)
@@ -267,7 +267,7 @@ class URLResolverTest {
         assertEquals("Resolving URLs", final.message)
         assertEquals(30, final.expectedTotal)
         assertEquals(30, final.completed)
-        assertEquals(listOf("first", "second"), final.subReports.map { it!!.message })
+        assertEquals(listOf("tool.zip/bin/tool", "second"), final.subReports.map { it!!.message })
     }
 
     @Test
@@ -281,6 +281,16 @@ class URLResolverTest {
         assertEquals(1, reports.size)
         assertEquals("tool.zip", reports.single().message)
         assertTrue(reports.single().subReports.isEmpty())
+    }
+
+    @Test
+    fun `archive root progress uses the archive name`() {
+        val reports = mutableListOf<dev.progress4j.api.ProgressReport>()
+        val progress = ParallelURLProgress(listOf("https://example.com/releases/foobar.tar.gz/")) { reports += it }
+
+        progress.tracker(0)!!.report(dev.progress4j.api.ProgressReport.create("Downloading", 20, 5))
+
+        assertEquals("foobar.tar.gz", reports.last().message)
     }
 
     @Test

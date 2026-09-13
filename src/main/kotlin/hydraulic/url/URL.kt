@@ -260,15 +260,20 @@ internal class ParallelURLProgress(inputs: List<String>, tracker: ProgressReport
 
 private fun progressLabel(input: String): String {
     val withoutScheme = if (URL_SCHEME.matchesAt(input, 0)) input.substringAfter("://") else input
-    val fileName = runCatching { parseURL(input).path }
-        .getOrNull()
+    val uri = runCatching { parseURL(input) }.getOrNull()
+    val archiveLabel = uri?.let { archiveProgressLabel(it) }
+    val fileName = uri?.path
         ?.takeIf { it.isNotEmpty() && !it.endsWith('/') }
         ?.substringAfterLast('/')
         ?.takeIf(String::isNotEmpty)
-    val label = fileName ?: withoutScheme.take(80).let {
-        if (it.length == withoutScheme.length) it else "$it…"
-    }
-    return label
+    val label = archiveLabel ?: fileName ?: withoutScheme
+    return label.take(80).let { if (it.length == label.length) it else "$it…" }
+}
+
+private fun archiveProgressLabel(uri: URI): String? {
+    val archive = runCatching { parseArchiveURL(uri) }.getOrNull() ?: return null
+    val archiveName = archive.archiveURI.path.substringAfterLast('/').takeIf(String::isNotEmpty) ?: return null
+    return if (archive.member.isEmpty()) archiveName else "$archiveName/${archive.member.joinToString("/")}"
 }
 
 internal fun progressTracker(
