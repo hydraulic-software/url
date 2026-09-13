@@ -134,6 +134,11 @@ graalvmNative {
         // build time. Its SVM substitutions reset build-machine thread state
         // before the image is written; application state remains runtime-only.
         buildArgs.add("-H:+UnlockExperimentalVMOptions")
+        // Pkl launch plans are tiny and short-lived. Use Truffle's fallback
+        // interpreter so the native image does not carry runtime JIT support.
+        buildArgs.add("-Dtruffle.UseFallbackRuntime=true")
+        buildArgs.add("-Dpolyglot.engine.WarnInterpreterOnly=false")
+        buildArgs.add("-Os")
         buildArgs.add("--initialize-at-build-time=")
         buildArgs.add("--initialize-at-run-time=hydraulic,org.tinylog")
         buildArgs.add("--initialize-at-run-time=org.msgpack.core.buffer.DirectBufferAccess")

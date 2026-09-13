@@ -1331,6 +1331,14 @@ class URLResolverTest {
         assertTrue(unlockedPackage.urls.getValue("verifier").endsWith(
             "/1.2.3/verifier-cli-1.2.3.jar"
         ))
+
+        val unsupportedOs = assertFailsWith<RuntimeException> {
+            evaluateRunPackage(
+                packageFile,
+                RunContext("freebsd", "x86_64", null, emptyList(), packageDir)
+            )
+        }
+        assertContains(unsupportedOs.message.orEmpty(), "Unsupported operating system for GraalVM: freebsd")
     }
 
     @Test

@@ -108,7 +108,7 @@ class URLResolver private constructor(
         val resolved = resolution.resource
         try {
             if (!resolved.path.exists())
-                damagedCacheEntry(resolved, "resolved content disappeared")
+                throwDamagedCacheEntry(resolved, "resolved content disappeared")
             if (expectedSha256Hash != null) {
                 require(resolved.path.isRegularFile()) { "SHA-256 locking requires a file result" }
                 if (resolution.verifiedSha256 != expectedSha256Hash) {
@@ -204,7 +204,7 @@ class URLResolver private constructor(
         val file = try {
             cached.directory.listDirectoryEntries().singleOrNull()
         } catch (e: IOException) {
-            damagedCacheEntry(cached, "content directory disappeared", e)
+            throwDamagedCacheEntry(cached, "content directory disappeared", e)
         }
         if (file?.isRegularFile() == true && file.sha256().equals(expectedHash, ignoreCase = true)) {
             val oldDirectory = cached.directory
