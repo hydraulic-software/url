@@ -14,7 +14,7 @@ if command -v url >/dev/null 2>&1; then
             ;;
     esac
 
-    graalvm_home=$(url "https://download.oracle.com/graalvm/25/latest/graalvm-jdk-25_${platform}_bin.tar.gz/")
+    graalvm_home=$(url "https://download.oracle.com/graalvm/25/latest/graalvm-jdk-25_${platform}_bin.tar.gz/graalvm-jdk-25.0.4+7.1/")
     if [ -d "$graalvm_home/Contents/Home" ]; then
         graalvm_home="$graalvm_home/Contents/Home"
     fi
