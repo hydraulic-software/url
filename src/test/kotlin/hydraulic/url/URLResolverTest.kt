@@ -13,6 +13,7 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
+import org.apache.commons.compress.archivers.tar.TarConstants
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -834,6 +835,24 @@ class URLResolverTest {
     }
 
     @Test
+    fun `locked nested archives cannot write through outer archive symlinks`() = withServer { server ->
+        val innerZip = zipOf("file.txt" to "authenticated member")
+        val outerTar = maliciousSymlinkTarGz("inner.zip" to innerZip)
+        server.createContext("/") {
+            if (it.requestURI.path == "/outer.tar.gz") it.respond(outerTar) else it.respond404()
+        }
+
+        makeCache().use { cache ->
+            assertFailsWith<IllegalArgumentException> {
+                URLResolver(cache).resolve(
+                    server.uri("/outer.tar.gz/inner.zip/file.txt#sha256=${innerZip.sha256()}")
+                )
+            }
+        }
+        assertFalse(Files.exists(tempDir / "payload", java.nio.file.LinkOption.NOFOLLOW_LINKS))
+    }
+
+    @Test
     fun `SHA-256 fragment locks the final resolved file`() = withServer { server ->
         val contents = "locked contents".toByteArray()
         val requestTargets = mutableListOf<String>()
@@ -1292,6 +1311,40 @@ class URLResolverTest {
         assertTrue(Files.isExecutable(destination / "bin/tool"))
     }
 
+    @Test
+    fun `streaming extraction rejects writes through chained archive symlinks`() {
+        val archive = maliciousSymlinkTarGz()
+        val destination = tempDir / "streamed"
+
+        assertFailsWith<IllegalArgumentException> {
+            extractStreamingTar(ByteArrayInputStream(archive), destination)
+        }
+        assertFalse(Files.exists(tempDir / "payload", java.nio.file.LinkOption.NOFOLLOW_LINKS))
+    }
+
+    @Test
+    fun `streaming extraction writes child entries through safe archive symlinks`() {
+        val archive = tarGzWithLinkedChild()
+        val destination = tempDir / "streamed"
+
+        extractStreamingTar(ByteArrayInputStream(archive), destination)
+
+        assertEquals("payload", (destination / "d/c").readText())
+        assertEquals("payload", (destination / "a/b/c").readText())
+    }
+
+    @Test
+    fun `local extraction rejects writes through chained archive symlinks`() {
+        val archive = tempDir / "attack.tar.gz"
+        archive.writeBytes(maliciousSymlinkTarGz())
+        val destination = tempDir / "local"
+
+        assertFailsWith<IllegalArgumentException> {
+            extractLocalArchive(archive, destination)
+        }
+        assertFalse(Files.exists(tempDir / "payload", java.nio.file.LinkOption.NOFOLLOW_LINKS))
+    }
+
     private fun makeCache(): LocalDiskCache {
         val config = LocalDiskCache.Configuration().apply {
             minFreeDiskSpace = 0
@@ -1349,6 +1402,41 @@ class URLResolverTest {
                     tar.write(data)
                     tar.closeArchiveEntry()
                 }
+            }
+        }
+        bytes.toByteArray()
+    }
+
+    private fun maliciousSymlinkTarGz(vararg files: Pair<String, ByteArray>): ByteArray = ByteArrayOutputStream().use { bytes ->
+        GzipCompressorOutputStream(bytes).use { gzip ->
+            TarArchiveOutputStream(gzip).use { tar ->
+                for ((name, target) in listOf("a" to ".", "a/link" to "..")) {
+                    tar.putArchiveEntry(TarArchiveEntry(name, TarConstants.LF_SYMLINK).apply { linkName = target })
+                    tar.closeArchiveEntry()
+                }
+                val contents = "escaped".toByteArray()
+                tar.putArchiveEntry(TarArchiveEntry("a/link/payload").apply { size = contents.size.toLong() })
+                tar.write(contents)
+                tar.closeArchiveEntry()
+                for ((name, data) in files) {
+                    tar.putArchiveEntry(TarArchiveEntry(name).apply { size = data.size.toLong() })
+                    tar.write(data)
+                    tar.closeArchiveEntry()
+                }
+            }
+        }
+        bytes.toByteArray()
+    }
+
+    private fun tarGzWithLinkedChild(): ByteArray = ByteArrayOutputStream().use { bytes ->
+        GzipCompressorOutputStream(bytes).use { gzip ->
+            TarArchiveOutputStream(gzip).use { tar ->
+                tar.putArchiveEntry(TarArchiveEntry("a/b", TarConstants.LF_SYMLINK).apply { linkName = "../d" })
+                tar.closeArchiveEntry()
+                val contents = "payload".toByteArray()
+                tar.putArchiveEntry(TarArchiveEntry("a/b/c").apply { size = contents.size.toLong() })
+                tar.write(contents)
+                tar.closeArchiveEntry()
             }
         }
         bytes.toByteArray()

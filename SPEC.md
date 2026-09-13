@@ -108,9 +108,11 @@ the archive resource. Supported suffixes are `.zip`, `.tar`, `.tar.gz`,
 case-insensitively. Archives may be nested.
 A trailing slash after an archive name selects its extracted root.
 
-Extraction must reject traversal and must not return a member whose resolved
-path escapes the extracted root. A single wrapper directory may be removed.
-The exact extraction-cache path is not part of this specification.
+Extraction must reject traversal, including writes redirected outside the
+extracted root by archive-created or pre-existing symbolic links. It must not
+return a member whose resolved path escapes the extracted root. A single
+wrapper directory may be removed. The exact extraction-cache path is not part
+of this specification.
 
 ### SHA-256 locks
 

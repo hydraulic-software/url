@@ -13,6 +13,7 @@ import java.io.IOException
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFileAttributeView
@@ -134,10 +135,10 @@ class URLResolver private constructor(
                 for (path in paths) {
                     val relative = oldDirectory.relativize(path)
                     val target = destination.resolve(relative)
-                    if (Files.isDirectory(path))
+                    if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS))
                         Files.createDirectories(target)
                     else
-                        Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES)
+                        Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES, LinkOption.NOFOLLOW_LINKS)
                 }
             }
             DiskCache.EntryComputationResult(metadata = metadata)
@@ -210,10 +211,10 @@ class URLResolver private constructor(
         Files.walk(source).use { paths ->
             for (path in paths) {
                 val target = destination.resolve(source.relativize(path))
-                if (Files.isDirectory(path))
+                if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS))
                     Files.createDirectories(target)
                 else
-                    Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES)
+                    Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES, LinkOption.NOFOLLOW_LINKS)
             }
         }
     }
