@@ -36,6 +36,8 @@ Pass `-r` or `--refresh` to ignore a cached HTTP response and download it again.
 Run `./build.sh nativePair` to build the native executables. If `url` is already
 on `PATH`, the script resolves Oracle GraalVM 25 through the URL cache and points
 Gradle at that JDK; otherwise it delegates directly to `./gradlew`.
+`./gradlew installDist` creates both `bin/url` and `bin/run` launchers in the
+installed distribution.
 
 ## Archives
 

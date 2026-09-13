@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.application.tasks.CreateStartScripts
 
 plugins {
     id("hydraulic.kotlin-common-conventions")
@@ -30,6 +31,31 @@ application {
     mainClass.set("hydraulic.url.URLKt")
     applicationName = "url"
     applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
+}
+
+val runStartScripts = tasks.register<CreateStartScripts>("runStartScripts") {
+    applicationName = "run"
+    mainClass = "hydraulic.url.RunKt"
+    classpath = tasks.named<CreateStartScripts>("startScripts").get().classpath
+    defaultJvmOpts = application.applicationDefaultJvmArgs
+    outputDir = layout.buildDirectory.dir("scripts").get().asFile
+    unixScriptFile = layout.buildDirectory.file("scripts/run")
+    windowsScriptFile = layout.buildDirectory.file("scripts/run.bat")
+}
+
+distributions {
+    named("main") {
+        contents {
+            from(runStartScripts.map { it.unixScriptFile.get().asFile }) {
+                into("bin")
+                eachFile { path = name }
+            }
+            from(runStartScripts.map { it.windowsScriptFile.get().asFile }) {
+                into("bin")
+                eachFile { path = name }
+            }
+        }
+    }
 }
 
 tasks.withType<Test>().configureEach {

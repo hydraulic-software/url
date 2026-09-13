@@ -252,3 +252,9 @@ private fun runProcess(command: List<String>, environment: Map<String, String>):
 private fun currentExecutablePath(): Path = ProcessHandle.current().info().command()
     .map(Path::of)
     .orElseThrow { IllegalStateException("Cannot locate the running executable") }
+
+fun main(args: Array<String>) {
+    val exitCode = commandLine("run").execute(*args)
+    if (exitCode != 0)
+        kotlin.system.exitProcess(exitCode)
+}
