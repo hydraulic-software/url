@@ -10,6 +10,15 @@ instrumented="$work_dir/url-instrumented"
 rm -rf "$work_dir"
 mkdir -p "$serve_dir"
 
+# Oracle Native Image 25.0.1 crashes in GC while dumping an instrumented
+# Truffle/Pkl profile on ARM64. Keep producing optimized ARM release binaries,
+# but reserve PGO for architectures where profile collection is reliable.
+if [[ $(uname -m) == "arm64" || $(uname -m) == "aarch64" ]]; then
+    echo "Skipping PGO profile collection on ARM64"
+    exec "$project_dir/gradlew" -p "$project_dir" nativePair \
+        -PoracleGraalVM --rerun-tasks --no-daemon
+fi
+
 "$project_dir/gradlew" -p "$project_dir" pgoTrainingData \
     -PoracleGraalVM -PpgoTrainingDirectory="$serve_dir" --no-daemon
 "$project_dir/gradlew" -p "$project_dir" nativeCompile \
