@@ -95,12 +95,20 @@ On Windows it will use `run.ps1` in the zip instead.
 
 Because of the caching, this means the program at `foobar.com` will keep itself up to date automatically.
 
+During development, pass a local launcher directory to bypass URL resolution
+and the cache. `run` selects `run.sh` on Unix-like systems and `run.ps1` on
+Windows, and forwards all remaining arguments:
+
+```shell
+$ run ./run.zip.d --help
+```
+
 `run.zip` can contain anything but it's conventional and strongly recommended that:
 
 * It be small. This is a stub script, not the full program.
-* It use `url` to download the right program for the host by detecting the OS and CPU arch.
+* It use the normalized `OS` and `ARCH` environment variables to select the right program for the host, then use `url` to download it.
 * The downloaded program is run from inside the disk cache, not copied elsewhere or "installed".
-* It respect the `V` environment variable to select a specific version of the program.
+* It respect `VER` when set. A suffix such as `run example.com/tool@1.2.3` removes the suffix from the resolved URL and invokes the runscript with `VER=1.2.3`.
 * It is silent by default. If the `RUN_LOG` environment variable is set, it can emit logs to stderr.
 
 ## Security

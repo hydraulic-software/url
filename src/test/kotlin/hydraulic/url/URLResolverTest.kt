@@ -840,6 +840,82 @@ class URLResolverTest {
     }
 
     @Test
+    fun `run target extracts a version suffix without disturbing URL suffixes`() {
+        assertEquals(RunTarget("example.com", "1.2.3"), parseRunTarget("example.com@1.2.3"))
+        assertEquals(
+            RunTarget("example.com/someapp?channel=beta#sha256=abc", "v7-beta"),
+            parseRunTarget("example.com/someapp@v7-beta?channel=beta#sha256=abc")
+        )
+        assertEquals(
+            RunTarget("https://user@example.com/path", null),
+            parseRunTarget("https://user@example.com/path")
+        )
+        assertEquals(RunTarget("example.com/tool@", null), parseRunTarget("example.com/tool@"))
+    }
+
+    @Test
+    fun `runscript platform values are normalized`() {
+        assertEquals("linux", runOperatingSystem("Linux"))
+        assertEquals("macos", runOperatingSystem("Mac OS X"))
+        assertEquals("freebsd", runOperatingSystem("FreeBSD"))
+        assertEquals("android", runOperatingSystem("Linux", "Android Runtime"))
+        assertEquals("windows", runOperatingSystem("Windows 11"))
+        assertEquals("x86_64", runArchitecture("amd64"))
+        assertEquals("arm64", runArchitecture("aarch64"))
+        assertEquals("riscv64", runArchitecture("riscv64"))
+    }
+
+    @Test
+    fun `runscript environment overrides platform values and only exposes requested version`() {
+        val inherited = mapOf("PATH" to "/bin", "OS" to "wrong", "ARCH" to "wrong", "VER" to "stale")
+        assertEquals(
+            mapOf("PATH" to "/bin", "OS" to "linux", "ARCH" to "arm64", "VER" to "2.0.4"),
+            runEnvironment(inherited, "linux", "arm64", "2.0.4")
+        )
+        assertEquals(
+            mapOf("PATH" to "/bin", "OS" to "macos", "ARCH" to "x86_64"),
+            runEnvironment(inherited, "macos", "x86_64", null)
+        )
+    }
+
+    @Test
+    fun `run selects the platform script from a local directory`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val unixScript = directory / "run.sh"
+        val windowsScript = directory / "run.ps1"
+        unixScript.writeText("exit 0\n")
+        windowsScript.writeText("exit 0\n")
+
+        assertEquals(unixScript.toAbsolutePath(), localRunScript(directory.toString(), false))
+        assertEquals(windowsScript.toAbsolutePath(), localRunScript(directory.toString(), true))
+        assertEquals(null, localRunScript((tempDir / "missing").toString(), false))
+    }
+
+    @Test
+    fun `run executes a non-executable local run script with contract variables and all arguments`() {
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+            return
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val output = tempDir / "local-arguments"
+        (directory / "run.sh").writeText(
+            "printf '%s\\n' \"${'$'}OS\" \"${'$'}ARCH\" \"${'$'}{VER-unset}\" \"${'$'}@\" > '${output}'\n"
+        )
+        val run = Run(
+            executablePath = { tempDir / "run" },
+            windows = false,
+            environment = System.getenv() + ("VER" to "stale"),
+            operatingSystem = "linux",
+            architecture = "arm64"
+        )
+
+        val exitCode = CommandLine(run).setStopAtPositional(true)
+            .execute("${directory}@v7-beta", "--help", "two words")
+
+        assertEquals(0, exitCode)
+        assertEquals("linux\narm64\nv7-beta\n--help\ntwo words\n", output.readText())
+    }
+
+    @Test
     fun `run installation creates an idempotent sibling hard link`() {
         val run = tempDir / "run"
         val url = tempDir / "url"

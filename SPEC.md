@@ -116,6 +116,24 @@ Unix-like systems or `run.zip/run.ps1` on Windows. Other URL paths are resolved
 directly. A PowerShell startup script must be invoked through PowerShell on
 Windows.
 
+If the first operand names an existing local directory, `run` must bypass URL
+resolution and execute `run.sh` from that directory on Unix-like systems or
+`run.ps1` on Windows. The Unix startup script does not need a shebang or
+executable permission. Remaining operands are passed to it unchanged.
+
+Before executing a startup script, `run` must set `OS` and `ARCH` in its
+environment. `OS` must be `linux`, `macos`, `android`, `freebsd`, or `windows`
+on those systems. `ARCH` must be `x86_64` on x86-64 systems and `arm64` on
+AArch64 systems. Implementations may define stable lowercase values for other
+systems and architectures; scripts must reject values they do not support.
+
+A non-empty `@VERSION` suffix on the locator, before any query or fragment,
+must be removed before local lookup or URL resolution and exposed to the
+startup script as `VER=VERSION`. For example, `run example.com/tool@1.2.3`
+resolves `example.com/tool` with `VER=1.2.3`. If there is no version suffix,
+`run` must remove any inherited `VER` value from the startup environment.
+`run` must override inherited `OS` and `ARCH` values with its normalized ones.
+
 `run --install` must ensure that sibling `run` and `url` command names refer to
 hard links of the same executable and install the optional shell integration.
 Shell integration may be platform-specific and is otherwise non-contractual.
