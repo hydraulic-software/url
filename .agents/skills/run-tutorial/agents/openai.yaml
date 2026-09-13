@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Tutorial"
+  short_description: "Create and understand run.zip launchers"
+  default_prompt: "Use $run-tutorial to help me create or understand a portable run.zip launcher."

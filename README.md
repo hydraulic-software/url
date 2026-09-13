@@ -1,7 +1,13 @@
 # `url` and `run`
 
-* `url` downloads the given URL to a disk cache and prints its path.
-* `run` takes a URL, appends a well known path and executes what it finds there, with `zsh` integration so you can run URLs directly.
+- `url` downloads the given URL to a disk cache and prints its path.
+- `run` takes a URL, appends a well-known path and executes what it finds there, with `zsh` integration so you can run URLs directly.
+
+To learn how to publish software for `run` [read this user guide](.agents/skills/run-tutorial/SKILL.md).
+
+---
+
+## Intro
 
 ```shell
 $ run --install
