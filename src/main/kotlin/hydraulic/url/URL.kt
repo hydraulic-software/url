@@ -339,8 +339,7 @@ internal fun readURLsFromStdin(reader: java.io.BufferedReader = System.`in`.buff
 
 fun main(args: Array<String>) {
     val exitCode = commandLine(processInvocationName()).execute(*args)
-    if (exitCode != 0)
-        kotlin.system.exitProcess(exitCode)
+    kotlin.system.exitProcess(exitCode)
 }
 
 internal fun commandLine(invocationName: String = "url"): CommandLine {

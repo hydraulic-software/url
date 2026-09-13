@@ -224,6 +224,5 @@ else
 
 fun main(args: Array<String>) {
     val exitCode = commandLine("run").execute(*args)
-    if (exitCode != 0)
-        kotlin.system.exitProcess(exitCode)
+    kotlin.system.exitProcess(exitCode)
 }
