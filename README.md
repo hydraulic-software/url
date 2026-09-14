@@ -101,30 +101,35 @@ separators. An `=` inside a URL path or query string remains part of the URL.
 
 ## Running programs
 
-`run foobar.com --help` resolves `https://foobar.com/run.zip/run.pkl`,
+`run foobar.com --help` resolves `https://foobar.com/run.zip/run.js`,
 evaluates its launch plan, and passes `--help` to the resulting executable.
-The Pkl module describes which URLs to resolve and the final executable to
-launch, so the package can select the right binary for each platform without a
-shell wrapper.
+The JavaScript script describes which URLs to resolve and the final executable
+to launch, so the package can select the right binary for each platform without
+a shell wrapper.
 
 Because of the caching, this means the program at `foobar.com` will keep itself up to date automatically.
 
 During development, pass a local launcher directory to bypass URL resolution
-and the cache. The directory must contain `run.pkl`, and `run` forwards all
+and the cache. The directory must contain `run.js`, and `run` forwards all
 remaining arguments:
 
 ```shell
 $ run ./run.zip.d --help
 ```
 
-The package imports `run:context` to access `os`, `arch`, nullable `ver`, `args`,
-`packageDir`, and the paths resolved from its `urls` object. URL resolution is
-performed before the final command is evaluated. On Windows, executable URLs
-may omit their final `.exe` suffix.
+The package accesses `context.os`, `context.arch`, nullable `context.ver`,
+`context.args`, and `context.packageDir`. It calls `urls()` with a map of
+URLs; the host resolves each map concurrently and returns a map of local paths.
+It may call `urls()` multiple times; calls complete in script order.
+The default export is the launch plan. On Windows, executable URLs may omit
+their final `.exe` suffix.
+
+Packages may import other JavaScript files from their own directory using
+relative ECMAScript module imports.
 
 `run.zip` can contain anything but it's conventional and strongly recommended that:
 
-* It keep `run.pkl` small. The package should describe the launch rather than
+* It keep `run.js` small. The package should describe the launch rather than
   contain the downloaded program.
 * It use `url` values with archive members when a program lives inside an
   archive.

@@ -10,18 +10,6 @@ plugins {
 
 repositories { mavenCentral() }
 
-val pklNativeImageSupport = sourceSets.create("pklNativeImageSupport")
-
-configurations[pklNativeImageSupport.implementationConfigurationName].extendsFrom(
-    configurations.implementation.get()
-)
-configurations.named("nativeImageClasspath") {
-    exclude("com.github.ajalt.mordant", "mordant-jvm-ffm")
-    exclude("com.github.ajalt.mordant", "mordant-jvm-ffm-jvm")
-    exclude("com.github.ajalt.mordant", "mordant-jvm-jna")
-    exclude("com.github.ajalt.mordant", "mordant-jvm-jna-jvm")
-}
-
 dependencies {
     implementation(fileTree("libs") { include("*.jar") })
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.4.10")
@@ -38,11 +26,9 @@ dependencies {
     // variadic ioctl entry point with the wrong ABI when detecting TTY size.
     implementation("com.github.ajalt.mordant:mordant:3.1.0")
     implementation("info.picocli:picocli:4.7.6")
-    implementation("org.pkl-lang:pkl-core:0.32.1")
-    implementation("org.graalvm.sdk:nativeimage:25.0.4")
+    implementation("org.graalvm.polyglot:polyglot:25.0.4")
+    implementation("org.graalvm.polyglot:js:25.0.4")
     kapt("info.picocli:picocli-codegen:4.7.6")
-
-    add(pklNativeImageSupport.compileOnlyConfigurationName, "org.graalvm.nativeimage:svm:25.0.1")
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
@@ -129,25 +115,9 @@ graalvmNative {
             )
         })
         jvmArgs(application.applicationDefaultJvmArgs)
-        classpath.from(pklNativeImageSupport.output)
-        // Pkl's native executable initializes the language implementation at
-        // build time. Its SVM substitutions reset build-machine thread state
-        // before the image is written; application state remains runtime-only.
-        buildArgs.add("-H:+UnlockExperimentalVMOptions")
-        // Pkl launch plans are tiny and short-lived. Use Truffle's fallback
-        // interpreter so the native image does not carry runtime JIT support.
-        buildArgs.add("-Dtruffle.UseFallbackRuntime=true")
-        buildArgs.add("-Dpolyglot.engine.WarnInterpreterOnly=false")
         buildArgs.add("-Os")
-        buildArgs.add("--initialize-at-build-time=")
         buildArgs.add("--initialize-at-run-time=hydraulic,org.tinylog")
-        buildArgs.add("--initialize-at-run-time=org.msgpack.core.buffer.DirectBufferAccess")
-        buildArgs.add("--initialize-at-run-time=org.pkl.core.util.BaseDirectory,org.pkl.core.util.BaseDirectories,org.pkl.core.util.DebugLogger")
         buildArgs.add("--initialize-at-run-time=org.jline.nativ,org.jline.terminal.impl.jni")
-        buildArgs.add("--no-fallback")
-        buildArgs.add("-H:IncludeResources=org/pkl/core/stdlib/.*\\.pkl")
-        buildArgs.add("-H:IncludeResourceBundles=org.pkl.core.errorMessages")
-        buildArgs.add("-H:IncludeResourceBundles=org.pkl.parser.errorMessages")
         providers.gradleProperty("nativePgoProfile").orNull?.let { buildArgs.add("--pgo=$it") }
         if (providers.gradleProperty("nativePgoInstrument").isPresent) buildArgs.add("--pgo-instrument")
     }

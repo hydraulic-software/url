@@ -1125,14 +1125,14 @@ class URLResolverTest {
     }
 
     @Test
-    fun `run directory convention preserves URL suffixes and selects the Pkl package`() {
-        assertEquals(URI("https://example.com/run.zip/run.pkl"), runTargetURI(URI("https://example.com")))
+    fun `run directory convention preserves URL suffixes and selects the JavaScript package`() {
+        assertEquals(URI("https://example.com/run.zip/run.js"), runTargetURI(URI("https://example.com")))
         assertEquals(
-            URI("https://example.com/tools/run.zip/run.pkl?channel=beta#sha256=abc"),
+            URI("https://example.com/tools/run.zip/run.js?channel=beta#sha256=abc"),
             runTargetURI(URI("https://example.com/tools/?channel=beta#sha256=abc"))
         )
-        assertEquals(URI("https://example.com/tools/run.zip/run.pkl"), runTargetURI(URI("https://example.com/tools/")))
-        assertEquals(URI("https://example.com/tool.pkl"), runTargetURI(URI("https://example.com/tool.pkl")))
+        assertEquals(URI("https://example.com/tools/run.zip/run.js"), runTargetURI(URI("https://example.com/tools/")))
+        assertEquals(URI("https://example.com/tool.js"), runTargetURI(URI("https://example.com/tool.js")))
     }
 
     @Test
@@ -1162,29 +1162,30 @@ class URLResolverTest {
     }
 
     @Test
-    fun `run selects the Pkl package from a local directory`() {
+    fun `run selects the JavaScript package from a local directory`() {
         val directory = (tempDir / "run.zip.d").createDirectories()
-        val pkl = directory / "run.pkl"
-        pkl.writeText("executable = \"/bin/true\"\narguments = List()\n")
+        val script = directory / "run.js"
+        script.writeText("urls({}); export default { executable: \"/bin/true\", arguments: [] };\n")
 
-        assertEquals(pkl.toAbsolutePath(), localRunPackage(directory.toString()))
+        assertEquals(script.toAbsolutePath(), localRunPackage(directory.toString()))
         assertEquals(null, localRunPackage((tempDir / "missing").toString()))
     }
 
     @Test
     fun `bare launch-plan executables use the host command search path`() {
-        val packageFile = Path.of("site/demo/run.pkl").toAbsolutePath()
+        val packageFile = Path.of("site/demo/run.js").toAbsolutePath()
         val packageDir = packageFile.parent
-        val runPackage = evaluateRunPackage(
+        val plan = evaluateRunJavaScript(
             packageFile,
-            RunContext("windows", "x86_64", null, emptyList(), packageDir)
+            RunContext("windows", "x86_64", null, emptyList(), packageDir),
+            { emptyMap() }
         )
 
-        assertEquals(Path.of("powershell.exe"), runPackage.launchPlan(emptyMap()).executable)
+        assertEquals(Path.of("powershell.exe"), plan.executable)
     }
 
     @Test
-    fun `run evaluates a local Pkl package and passes its arguments`() {
+    fun `run evaluates a local JavaScript package and passes its arguments`() {
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
             return
         val directory = (tempDir / "run.zip.d").createDirectories()
@@ -1192,12 +1193,10 @@ class URLResolverTest {
         val executable = directory / "tool.sh"
         executable.writeText("#!/bin/sh\nprintf '%s\\n' \"${'$'}@\" > '$output'\n")
         executable.toFile().setExecutable(true)
-        (directory / "run.pkl").writeText(
+        (directory / "run.js").writeText(
             """
-            import "run:context" as c
-            urls {}
-            executable = "\(c.packageDir)/tool.sh"
-            arguments = c.args
+            urls({});
+            export default { executable: `${'$'}{context.packageDir}/tool.sh`, arguments: context.args };
             """.trimIndent()
         )
         val run = Run(
@@ -1215,20 +1214,112 @@ class URLResolverTest {
     }
 
     @Test
-    fun `run resolves named Pkl URLs before evaluating the launch command`() = withServer { server ->
+    fun `JavaScript urls function resolves one named map and returns paths`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            const resolved = urls({ alpha: "https://example.com/alpha", beta: "https://example.com/beta" });
+            export default { executable: resolved.alpha, arguments: [resolved.beta, context.os, ...context.args] };
+            """.trimIndent()
+        )
+        var calls = 0
+        var requested = emptyMap<String, String>()
+        val plan = evaluateRunJavaScript(
+            packageFile,
+            RunContext("linux", "x86_64", "1.2.3", listOf("one"), directory)
+        ) { urls ->
+            calls++
+            requested = urls
+            urls.mapValues { (_, value) -> Path.of("/cache/${value.substringAfterLast('/')}") }
+        }
+
+        assertEquals(1, calls)
+        assertEquals(setOf("alpha", "beta"), requested.keys)
+        assertEquals(Path.of("/cache/alpha"), plan.executable)
+        assertEquals(listOf("/cache/beta", "linux", "one"), plan.arguments)
+    }
+
+    @Test
+    fun `JavaScript launch plans allow multiple URL calls and reject malformed results`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val secondCall = directory / "second.js"
+        secondCall.writeText("urls({ first: \"https://example.com/first\" }); urls({ second: \"https://example.com/second\" }); export default { executable: \"true\", arguments: [] }; ")
+        var callCount = 0
+        evaluateRunJavaScript(secondCall, RunContext("linux", "x86_64", null, emptyList(), directory)) {
+            callCount++
+            emptyMap()
+        }
+        assertEquals(2, callCount)
+
+        val malformed = directory / "malformed.js"
+        malformed.writeText("urls({}); export default { executable: \"true\", arguments: [1] }; ")
+        assertFailsWith<IllegalArgumentException> {
+            evaluateRunJavaScript(malformed, RunContext("linux", "x86_64", null, emptyList(), directory)) { emptyMap() }
+        }
+    }
+
+    @Test
+    fun `JavaScript packages can import local modules`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        (directory / "helper.js").writeText("export const executable = \"true\";\n")
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            import { executable } from "./helper.js";
+            urls({});
+            export default { executable, arguments: [] };
+            """.trimIndent()
+        )
+
+        assertEquals(
+            Path.of("true"),
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { emptyMap() }
+                .executable
+        )
+    }
+
+    @Test
+    fun `JavaScript packages cannot access host classes or IO`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            urls({});
+            Java.type("java.lang.System");
+            export default { executable: "true", arguments: [] };
+            """.trimIndent()
+        )
+
+        assertFailsWith<RuntimeException> {
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { emptyMap() }
+        }
+
+        (tempDir / "outside.js").writeText("export default \"outside\";\n")
+        val escape = directory / "escape.js"
+        escape.writeText(
+            """
+            import outside from "../outside.js";
+            urls({});
+            export default { executable: outside, arguments: [] };
+            """.trimIndent()
+        )
+        assertFailsWith<RuntimeException> {
+            evaluateRunJavaScript(escape, RunContext("linux", "x86_64", null, emptyList(), directory)) { emptyMap() }
+        }
+    }
+
+    @Test
+    fun `run resolves named JavaScript URLs before evaluating the launch command`() = withServer { server ->
         val directory = (tempDir / "run.zip.d").createDirectories()
         val output = tempDir / "resolved-output"
         server.createContext("/tool") {
             it.respond("#!/bin/sh\nprintf '%s\\n' \"${'$'}@\" > \"${'$'}1\"\n".toByteArray())
         }
-        (directory / "run.pkl").writeText(
+        (directory / "run.js").writeText(
             """
-            import "run:context" as c
-            urls {
-              tool = "${server.uri("/tool")}"
-            }
-            executable = c.resolved.tool
-            arguments = c.args
+            const resolved = urls({ tool: "${server.uri("/tool")}" });
+            export default { executable: resolved.tool, arguments: context.args };
             """.trimIndent()
         )
         val run = Run(
@@ -1272,23 +1363,27 @@ class URLResolverTest {
     }
 
     @Test
-    fun `cel verifier Pkl produces portable launch plans`() {
-        val packageFile = Path.of("site/cel-verifier/run.zip.d/run.pkl").toAbsolutePath()
+    fun `cel verifier JavaScript produces portable launch plans`() {
+        val packageFile = Path.of("site/cel-verifier/run.zip.d/run.js").toAbsolutePath()
         val packageDir = packageFile.parent
         val java = tempDir / "java"
+        val javaExe = tempDir / "java.exe"
         val verifier = tempDir / "verifier.jar"
 
-        val macPackage = evaluateRunPackage(
+        val macUrls = mutableMapOf<String, String>()
+        val macPlan = evaluateRunJavaScript(
             packageFile,
             RunContext("macos", "arm64", null, listOf("input.cel"), packageDir)
-        )
-        assertTrue(macPackage.urls.getValue("java").contains(
+        ) { urls ->
+            macUrls.putAll(urls)
+            mapOf("java" to java, "verifier" to verifier)
+        }
+        assertTrue(macUrls.getValue("java").contains(
             "graalvm-jdk-25_macos-aarch64_bin.tar.gz/graalvm-jdk-25.0.4+7.1/Contents/Home/bin/java#sha256="
         ))
-        assertTrue(macPackage.urls.getValue("verifier").endsWith(
+        assertTrue(macUrls.getValue("verifier").endsWith(
             "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
         ))
-        val macPlan = macPackage.launchPlan(mapOf("java" to java, "verifier" to verifier))
         assertEquals(java, macPlan.executable)
         assertEquals(
             listOf(
@@ -1301,18 +1396,20 @@ class URLResolverTest {
             macPlan.arguments
         )
 
-        val windowsPackage = evaluateRunPackage(
+        val windowsUrls = mutableMapOf<String, String>()
+        val windowsPlan = evaluateRunJavaScript(
             packageFile,
             RunContext("windows", "x86_64", "0.14.0", emptyList(), packageDir)
-        )
-        assertTrue(windowsPackage.urls.getValue("java").contains(
+        ) { urls ->
+            windowsUrls.putAll(urls)
+            mapOf("java" to javaExe, "verifier" to verifier)
+        }
+        assertTrue(windowsUrls.getValue("java").contains(
             "graalvm-jdk-25_windows-x64_bin.zip/graalvm-jdk-25.0.4+7.1/bin/java#sha256="
         ))
-        assertTrue(windowsPackage.urls.getValue("verifier").endsWith(
+        assertTrue(windowsUrls.getValue("verifier").endsWith(
             "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
         ))
-        val javaExe = tempDir / "java.exe"
-        val windowsPlan = windowsPackage.launchPlan(mapOf("java" to javaExe, "verifier" to verifier))
         assertEquals(javaExe, windowsPlan.executable)
         assertEquals(
             listOf(
@@ -1324,21 +1421,53 @@ class URLResolverTest {
             windowsPlan.arguments
         )
 
-        val unlockedPackage = evaluateRunPackage(
+        val unlockedUrls = mutableMapOf<String, String>()
+        evaluateRunJavaScript(
             packageFile,
             RunContext("windows", "x86_64", "1.2.3", emptyList(), packageDir)
-        )
-        assertTrue(unlockedPackage.urls.getValue("verifier").endsWith(
+        ) { urls ->
+            unlockedUrls.putAll(urls)
+            mapOf("java" to javaExe, "verifier" to verifier)
+        }
+        assertTrue(unlockedUrls.getValue("verifier").endsWith(
             "/1.2.3/verifier-cli-1.2.3.jar"
         ))
 
         val unsupportedOs = assertFailsWith<RuntimeException> {
-            evaluateRunPackage(
+            evaluateRunJavaScript(
                 packageFile,
-                RunContext("freebsd", "x86_64", null, emptyList(), packageDir)
+                RunContext("freebsd", "x86_64", null, emptyList(), packageDir),
+                { emptyMap() }
             )
         }
         assertContains(unsupportedOs.message.orEmpty(), "Unsupported operating system for GraalVM: freebsd")
+    }
+
+    @Test
+    fun `unknown GraalVM versions are not hashlocked`() {
+        val sourceDirectory = Path.of("site/cel-verifier/run.zip.d").toAbsolutePath()
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        Files.copy(sourceDirectory / "graalvm.js", directory / "graalvm.js")
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            import { graalvm } from "./graalvm.js";
+            const resolved = urls({ java: graalvm("25.0.5+7.2") });
+            export default { executable: resolved.java, arguments: [] };
+            """.trimIndent()
+        )
+        var requested = ""
+
+        evaluateRunJavaScript(
+            packageFile,
+            RunContext("linux", "x86_64", null, emptyList(), directory)
+        ) { urls ->
+            requested = urls.getValue("java")
+            mapOf("java" to tempDir / "java")
+        }
+
+        assertContains(requested, "/graalvm-jdk-25_linux-x64_bin.tar.gz/graalvm-jdk-25.0.5+7.2/bin/java")
+        assertFalse(requested.contains("#sha256="))
     }
 
     @Test

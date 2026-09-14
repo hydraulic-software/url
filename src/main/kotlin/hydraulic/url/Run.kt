@@ -17,10 +17,10 @@ import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.io.path.exists
 
-/** Resolves and executes a URL, or evaluates and executes a local run.pkl package. */
+/** Resolves and executes a URL, or evaluates and executes a local run.js package. */
 @Command(
     name = "run",
-    description = ["Resolve and execute a URL or local run.pkl package."],
+    description = ["Resolve and execute a URL or local run.js package."],
     version = [VERSION],
     mixinStandardHelpOptions = true
 )
@@ -95,16 +95,16 @@ class Run(
                         arch = architecture,
                         ver = target.version,
                         args = arguments,
-                        packageDir = packagePath.toRealPath().parent ?: error("run.pkl must have a parent directory")
+                        packageDir = packagePath.toRealPath().parent ?: error("run.js must have a parent directory")
                     )
-                    val packageDefinition = evaluateRunPackage(packagePath, context)
                     val opened = ConcurrentLinkedQueue<ResolvedURL>()
                     try {
-                        val resolved = parallelMapOrdered(packageDefinition.urls.entries.toList()) { _, (name, value) ->
-                            resolveRunURL(resolver, parseURL(value), windows).also { opened += it }
-                                .let { name to it.path.toAbsolutePath() }
-                        }.toMap()
-                        val plan = packageDefinition.launchPlan(resolved)
+                        val plan = evaluateRunJavaScript(packagePath, context) { urls ->
+                            parallelMapOrdered(urls.entries.toList()) { _, (name, value) ->
+                                resolveRunURL(resolver, parseURL(value), windows).also { opened += it }
+                                    .let { name to it.path.toAbsolutePath() }
+                            }.toMap()
+                        }
                         return runResolvedPath(plan.executable, plan.arguments, environment)
                     } finally {
                         opened.forEach(ResolvedURL::close)
@@ -154,8 +154,8 @@ internal fun runArchitecture(architecture: String = System.getProperty("os.arch"
 
 internal fun localRunPackage(target: String): Path? {
     val directory = runCatching { Path.of(target) }.getOrNull()?.takeIf(Files::isDirectory) ?: return null
-    val packagePath = directory.resolve("run.pkl").toAbsolutePath()
-    require(Files.isRegularFile(packagePath)) { "Local run directory does not contain run.pkl: $directory" }
+    val packagePath = directory.resolve("run.js").toAbsolutePath()
+    require(Files.isRegularFile(packagePath)) { "Local run directory does not contain run.js: $directory" }
     return packagePath
 }
 
@@ -163,7 +163,7 @@ internal fun runTargetURI(uri: URI): URI {
     val path = uri.rawPath.orEmpty()
     if (path.isNotEmpty() && !path.endsWith('/'))
         return uri
-    val suffix = "run.zip/run.pkl"
+    val suffix = "run.zip/run.js"
     val text = uri.toASCIIString()
     val delimiter = listOf(text.indexOf('?'), text.indexOf('#')).filter { it >= 0 }.minOrNull() ?: text.length
     val base = text.substring(0, delimiter)
