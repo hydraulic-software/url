@@ -23,6 +23,7 @@ dependencies {
     implementation(libs.info.picocli)
     implementation("org.graalvm.polyglot:polyglot:25.0.4")
     implementation("org.graalvm.polyglot:js:25.0.4")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
     kapt(libs.info.picocli.codegen)
 
     runtimeOnly(libs.org.tinylog.impl)

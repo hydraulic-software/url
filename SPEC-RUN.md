@@ -78,9 +78,11 @@ not contain newline characters, duplicate entries are invalid, and symbolic
 links are not part of this format.
 
 The manifest is an intermediate verification value and need not be stored in
-the package. An implementation recomputes it after extraction, verifies that
-the timestamp token's message imprint matches it, and only then evaluates
-`run.js`. ZIP ordering, compression, and file timestamps are not covered.
+the package. An implementation recomputes it after extraction, verifies the
+RFC 3161 CMS signature and timestamping certificate against the host's trusted
+certificate store, verifies that the timestamp token's message imprint matches
+it, and only then evaluates `run.js`. ZIP ordering, compression, and file
+timestamps are not covered.
 
 ## Version suffixes
 

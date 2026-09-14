@@ -28,6 +28,7 @@ dependencies {
     implementation("info.picocli:picocli:4.7.6")
     implementation("org.graalvm.polyglot:polyglot:25.0.4")
     implementation("org.graalvm.polyglot:js:25.0.4")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
     kapt("info.picocli:picocli-codegen:4.7.6")
 
     testImplementation(kotlin("test"))

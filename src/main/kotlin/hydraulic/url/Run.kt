@@ -97,6 +97,7 @@ class Run(
                         args = arguments,
                         packageDir = packagePath.toRealPath().parent ?: error("run.js must have a parent directory")
                     )
+                    verifyRunPackage(context.packageDir)
                     val opened = ConcurrentLinkedQueue<ResolvedURL>()
                     try {
                         val plan = evaluateRunJavaScript(packagePath, context) { urls ->

@@ -1316,6 +1316,33 @@ class URLResolverTest {
     }
 
     @Test
+    fun `run package manifest is sorted by UTF-8 path and excludes its timestamp`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        (directory / "z.txt").writeText("z")
+        (directory / "a.txt").writeText("a")
+        (directory / "é.txt").writeText("e")
+        (directory / "timestamp.tsr").writeBytes(byteArrayOf(1, 2, 3))
+
+        assertEquals(
+            """
+            ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb  a.txt
+            594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06  z.txt
+            3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea  é.txt
+            """.trimIndent() + "\n",
+            canonicalRunManifest(directory).toString(StandardCharsets.UTF_8)
+        )
+    }
+
+    @Test
+    fun `run package verification rejects an invalid timestamp response`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        (directory / "run.js").writeText("export default { executable: \"true\", arguments: [] };")
+        (directory / "timestamp.tsr").writeText("not a timestamp")
+
+        assertFailsWith<IllegalArgumentException> { verifyRunPackage(directory) }
+    }
+
+    @Test
     fun `make-run-zip PowerShell launcher checks reparse points when PowerShell is available`() {
         val commandLookup = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
             { command: String -> ProcessBuilder("where.exe", command) }
