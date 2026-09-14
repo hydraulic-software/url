@@ -38,7 +38,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: gradle
       - name: Test and compile native binaries
-        run: ./gradlew test --no-daemon && ./scripts/build-native-pgo.sh
+        run: ./gradlew test --no-daemon && ./scripts/build-native.sh
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
