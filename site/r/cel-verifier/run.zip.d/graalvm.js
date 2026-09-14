@@ -1,3 +1,5 @@
+import {isMac, isWindows} from "./utils.js";
+
 const javaHashes = {
   "25.0.4+7.1": {
     "linux-x64": "76007c309f821aaf435bce63162ea0395587fc77350801c81643fe7feea37276",
@@ -18,8 +20,8 @@ function mapArch(arch) {
 
 export function graalvm(version) {
   const platform = `${context.os}-${mapArch(context.arch)}`;
-  const archive = context.os === "windows" ? "zip" : "tar.gz";
-  const bundle = context.os === "macos" ? "Contents/Home/" : "";
+  const archive = isWindows ? "zip" : "tar.gz";
+  const bundle = isMac ? "Contents/Home/" : "";
   const hash = javaHashes[version]?.[platform];
 
   if (javaHashes[version] !== undefined && hash === undefined) {
