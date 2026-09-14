@@ -8,7 +8,7 @@ const javaHashes = {
   },
 };
 
-function graalArch(arch) {
+function mapArch(arch) {
   switch (arch) {
     case "x86_64": return "x64";
     case "arm64": return "aarch64";
@@ -16,22 +16,10 @@ function graalArch(arch) {
   }
 }
 
-function graalOs(os) {
-  switch (os) {
-    case "linux":
-    case "macos":
-    case "windows":
-      return os;
-    default:
-      throw new Error(`Unsupported operating system for GraalVM: ${os}`);
-  }
-}
-
 export function graalvm(version) {
-  const platformOs = graalOs(context.os);
-  const platform = `${platformOs}-${graalArch(context.arch)}`;
-  const archive = platformOs === "windows" ? "zip" : "tar.gz";
-  const bundle = platformOs === "macos" ? "Contents/Home/" : "";
+  const platform = `${context.os}-${mapArch(context.arch)}`;
+  const archive = context.os === "windows" ? "zip" : "tar.gz";
+  const bundle = context.os === "macos" ? "Contents/Home/" : "";
   const hash = javaHashes[version]?.[platform];
 
   if (javaHashes[version] !== undefined && hash === undefined) {
