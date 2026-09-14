@@ -63,9 +63,6 @@ internal fun canonicalRunManifest(packageDir: Path): ByteArray {
                 }
                 return@forEach
             }
-            require(path.fileName.toString() != TIMESTAMP_FILE) {
-                "Only the package-root timestamp.tsr entry is reserved for timestamps"
-            }
             if (attributes.isDirectory)
                 return@forEach
             require(attributes.isRegularFile) {

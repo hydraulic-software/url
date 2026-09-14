@@ -79,8 +79,9 @@ links are not part of this format.
 
 Package builders may omit files named `context.d.ts` as a convenience. If such
 a file is present in a package, it is included in the manifest and validated
-like any other file. The package-root `timestamp.tsr` entry is excluded from
-its own manifest; another `timestamp.tsr` entry is invalid.
+like any other file. Only the package-root `timestamp.tsr` entry is excluded
+from its own manifest; another `timestamp.tsr` entry is an ordinary manifest
+entry.
 
 The manifest is an intermediate verification value and need not be stored in
 the package. An implementation recomputes it after extraction, verifies the
