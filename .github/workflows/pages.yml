@@ -25,10 +25,19 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Package demo tool
+      # Each run package is authored as a directory so it can be tested and
+      # edited directly. Publish the corresponding ZIP beside each package.
+      - name: Package run tools
         run: |
-          cd site/r/demo/run.zip.d
-          zip -X ../run.zip run.js demo.sh demo.ps1
+          find site/r -type d -name 'run.zip.d' -print0 |
+            while IFS= read -r -d '' package; do
+              echo "Packaging $package"
+              (
+                cd "$package"
+                zip -X -r ../run.zip . \
+                  -x context.d.ts '*/context.d.ts' timestamp.tsr
+              )
+            done
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
