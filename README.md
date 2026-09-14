@@ -118,9 +118,10 @@ $ run ./run.zip.d --help
 ```
 
 The package accesses `context.os`, `context.arch`, nullable `context.ver`,
-`context.args`, and `context.packageDir`. It calls `urls()` with a map of
-URLs; the host resolves each map concurrently and returns a map of local paths.
-It may call `urls()` multiple times; calls complete in script order.
+`context.args`, and `context.packageDir`. It calls `urls()` with an array of
+URLs or a map whose values are URLs or arrays of URLs; the host resolves all
+entries concurrently and returns paths in the corresponding array or map
+shape. It may call `urls()` multiple times; calls complete in script order.
 The default export is the launch plan. On Windows, executable URLs may omit
 their final `.exe` suffix.
 

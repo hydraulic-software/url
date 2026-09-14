@@ -15,9 +15,11 @@ A package contains a small JavaScript launch description. The host provides an
 immutable `context` object with `os`, `arch`, nullable `ver`, `args`, and
 `packageDir` properties.
 
-Call `urls` with the resources needed by the launch plan. The host resolves each
-map concurrently and returns the corresponding local cache paths. Multiple
-calls are allowed, though they complete in script order. Finish
+Call `urls` with the resources needed by the launch plan. It accepts either an
+array of URLs or a map whose values are URLs or arrays of URLs. The host
+resolves all entries concurrently and returns the corresponding local cache
+paths in the same shape. Multiple calls are allowed, though they complete in
+script order. Finish
 the file with the launch-plan expression:
 
 ```js
@@ -26,6 +28,15 @@ const resolved = urls({
 });
 
 export default { executable: resolved.tool, arguments: context.args };
+```
+
+For unnamed resources, use an array. Named groups can contain arrays:
+
+```js
+const files = urls(["https://example.com/tool", "https://example.com/config"]);
+const platformFiles = urls({
+  macos: ["https://example.com/tool-macos", "https://example.com/helper-macos"],
+});
 ```
 
 The default export must contain a non-empty string `executable` and an array

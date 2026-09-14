@@ -1241,6 +1241,42 @@ class URLResolverTest {
     }
 
     @Test
+    fun `JavaScript urls function resolves unnamed and grouped arrays`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            const unnamed = urls(["https://example.com/one", "https://example.com/two"]);
+            const named = urls({ tools: ["https://example.com/three", "https://example.com/four"] });
+            export default {
+              executable: unnamed[0],
+              arguments: [unnamed[1], named.tools[0], named.tools[1]],
+            };
+            """.trimIndent()
+        )
+        val requested = mutableListOf<String>()
+        val plan = evaluateRunJavaScript(
+            packageFile,
+            RunContext("linux", "x86_64", null, emptyList(), directory)
+        ) { urls ->
+            requested += urls.values
+            urls.mapValues { (_, value) -> Path.of("/cache/${value.substringAfterLast('/')}") }
+        }
+
+        assertEquals(
+            setOf(
+                "https://example.com/one",
+                "https://example.com/two",
+                "https://example.com/three",
+                "https://example.com/four"
+            ),
+            requested.toSet()
+        )
+        assertEquals(Path.of("/cache/one"), plan.executable)
+        assertEquals(listOf("/cache/two", "/cache/three", "/cache/four"), plan.arguments)
+    }
+
+    @Test
     fun `JavaScript launch plans allow multiple URL calls and reject malformed results`() {
         val directory = (tempDir / "run.zip.d").createDirectories()
         val secondCall = directory / "second.js"
@@ -1248,7 +1284,7 @@ class URLResolverTest {
         var callCount = 0
         evaluateRunJavaScript(secondCall, RunContext("linux", "x86_64", null, emptyList(), directory)) {
             callCount++
-            emptyMap()
+            it.mapValues { (_, value) -> Path.of("/cache/${value.substringAfterLast('/')}") }
         }
         assertEquals(2, callCount)
 

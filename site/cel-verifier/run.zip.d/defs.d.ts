@@ -9,4 +9,10 @@ declare const context: Readonly<{
     packageDir: string;
 }>;
 
-declare function urls<T extends Record<string, string>>(requests: T): Readonly<{ [K in keyof T]: string; }>;
+type UrlInput = string | readonly string[];
+type UrlOutput<T> = T extends readonly string[] ? readonly string[] : string;
+
+declare function urls(requests: readonly string[]): readonly string[];
+declare function urls<T extends Record<string, UrlInput>>(
+    requests: T
+): Readonly<{ [K in keyof T]: UrlOutput<T[K]> }>;

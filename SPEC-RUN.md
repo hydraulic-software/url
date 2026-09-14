@@ -40,7 +40,18 @@ The implementation supplies one immutable `context` object:
 * `context.args`: arguments passed after the locator.
 * `context.packageDir`: the absolute path to the directory containing `run.js`.
 
-The `urls` function is the only host capability available to the package. It may be called any number of times and takes an object whose property values are URL strings. The host resolves all entries in each call concurrently and returns an object with the same property names and absolute local paths. Calls complete in script order. An empty object is valid.
+The `urls` function is the only host capability available to the package. It may be called any number of times. It accepts either an array of URL strings, returning an array of absolute local paths, or an object whose property values are URL strings or arrays of URL strings. Object properties containing arrays return arrays of paths under the same property name. The host resolves all entries in each call concurrently. Calls complete in script order. Empty arrays and objects are valid.
+
+```js
+const files = urls([
+  "https://example.com/tool",
+  "https://example.com/config",
+]);
+const platforms = urls({
+  linux: "https://example.com/tool-linux",
+  macos: ["https://example.com/tool-macos", "https://example.com/helper-macos"],
+});
+```
 
 URL values are passed to the ordinary URL resolver unchanged, including archive members and `#sha256=` fragments. On Windows, an executable URL may omit its final `.exe` suffix; resolution retries with `.exe` when the original resource or archive member is missing.
 
