@@ -1323,11 +1323,14 @@ class URLResolverTest {
         (directory / "z.txt").writeText("z")
         (directory / "a.txt").writeText("a")
         (directory / "é.txt").writeText("e")
+        (directory / "nested").createDirectories()
+        (directory / "nested" / "context.d.ts").writeText("validated")
         (directory / "timestamp.tsr").writeBytes(byteArrayOf(1, 2, 3))
 
         assertEquals(
             """
             ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb  a.txt
+            e3e4aec3737242616e0b3dd3a6c7eaaf3fe42746de7209e880dae8db335799cd  nested/context.d.ts
             594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06  z.txt
             3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea  é.txt
             """.trimIndent() + "\n",
@@ -1336,11 +1339,10 @@ class URLResolverTest {
     }
 
     @Test
-    fun `run package verification rejects build-excluded files`() {
+    fun `run package verification rejects nested timestamp files`() {
         val directory = (tempDir / "run.zip.d").createDirectories()
         (directory / "run.js").writeText("export default { executable: \"true\", arguments: [] };")
         (directory / "nested").createDirectories()
-        (directory / "nested" / "context.d.ts").writeText("untimestamped")
         (directory / "nested" / "timestamp.tsr").writeText("untimestamped")
         (directory / "timestamp.tsr").writeText("invalid timestamp")
 

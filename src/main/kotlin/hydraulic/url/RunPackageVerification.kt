@@ -63,9 +63,6 @@ internal fun canonicalRunManifest(packageDir: Path): ByteArray {
                 }
                 return@forEach
             }
-            require(path.fileName.toString() != "context.d.ts") {
-                "Run packages must not contain context.d.ts: ${root.relativize(path)}"
-            }
             require(path.fileName.toString() != TIMESTAMP_FILE) {
                 "Only the package-root timestamp.tsr entry is reserved for timestamps"
             }
