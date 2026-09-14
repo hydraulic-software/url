@@ -62,19 +62,19 @@ fi
 create_archive() {
   archive=$1
   if [ "$zip_source" = system ]; then
-    "$zip" -X -r "$archive" . -x context.d.ts '*/context.d.ts' timestamp.tsr
+    "$zip" -X -r "$archive" . -x context.d.ts '*/context.d.ts' timestamp.tsr >&2
   else
     "$zip" a -tzip -mx=9 "$archive" . \
-      '-xr!context.d.ts' '-xr!*/context.d.ts' '-xr!timestamp.tsr'
+      '-xr!context.d.ts' '-xr!*/context.d.ts' '-xr!timestamp.tsr' >&2
   fi
 }
 
 add_timestamp() {
   archive=$1
   if [ "$zip_source" = system ]; then
-    "$zip" -X "$archive" timestamp.tsr
+    "$zip" -X "$archive" timestamp.tsr >&2
   else
-    "$zip" a -tzip "$archive" timestamp.tsr
+    "$zip" a -tzip "$archive" timestamp.tsr >&2
   fi
 }
 
@@ -114,7 +114,7 @@ fi
 
 (
   cd "$source"
-  find . -type f ! -path './context.d.ts' ! -name timestamp.tsr -print
+  find . -type f ! -name context.d.ts ! -name timestamp.tsr -print
 ) | LC_ALL=C sort | while IFS= read -r file; do
   relative=${file#./}
   digest=$("$openssl" dgst -sha256 "$source/$relative" | sed 's/^.*= //')

@@ -19,8 +19,11 @@ import java.security.cert.CollectionCertStoreParameters
 import java.security.cert.CertStore
 import java.security.cert.CertPathBuilder
 import java.security.cert.PKIXBuilderParameters
+import java.security.cert.TrustAnchor
 import java.security.cert.X509CertSelector
 import java.security.cert.X509Certificate
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 import java.util.Date
 import kotlin.io.path.inputStream
 
@@ -59,6 +62,8 @@ internal fun canonicalRunManifest(packageDir: Path): ByteArray {
             require(attributes.isRegularFile) {
                 "Run packages may only contain regular files: ${root.relativize(path)}"
             }
+            if (path.fileName.toString() == "context.d.ts" || path.fileName.toString() == TIMESTAMP_FILE)
+                return@forEach
             files.add(path)
         }
     }
@@ -72,10 +77,7 @@ internal fun canonicalRunManifest(packageDir: Path): ByteArray {
     }.sortedWith { left, right -> compareUtf8(left.first, right.first) }
 
     return buildString {
-        records.forEach { (path, digest) ->
-            if (path != TIMESTAMP_FILE)
-                append(digest).append("  ").append(path).append('\n')
-        }
+        records.forEach { (path, digest) -> append(digest).append("  ").append(path).append('\n') }
     }.toByteArray(Charsets.UTF_8)
 }
 
@@ -118,21 +120,16 @@ private fun verifyTimestamp(responseBytes: ByteArray, manifest: ByteArray) {
 }
 
 private fun validateTimestampSigner(signedData: CMSSignedData, signer: X509Certificate, timestamp: Date) {
-    val trustStore = runCatching {
-        KeyStore.getInstance("Windows-ROOT").also { it.load(null, null) }
-    }.getOrElse {
-        KeyStore.getDefaultType().let { type ->
-            KeyStore.getInstance(type).also { store ->
-                val cacerts = Path.of(System.getProperty("java.home"), "lib", "security", "cacerts")
-                Files.newInputStream(cacerts).use { store.load(it, "changeit".toCharArray()) }
-            }
-        }
-    }
+    val trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+    trustManagerFactory.init(null as KeyStore?)
+    val trustManager = trustManagerFactory.trustManagers.filterIsInstance<X509TrustManager>().singleOrNull()
+        ?: throw IllegalArgumentException("The runtime does not provide an X.509 trust manager")
     val certificates = signedData.certificates.getMatches(null).map {
         JcaX509CertificateConverter().setProvider("BC").getCertificate(it)
     }
     val selector = X509CertSelector().also { it.certificate = signer }
-    val parameters = PKIXBuilderParameters(trustStore, selector).apply {
+    val trustAnchors = trustManager.acceptedIssuers.map { TrustAnchor(it, null) }.toSet()
+    val parameters = PKIXBuilderParameters(trustAnchors, selector).apply {
         date = timestamp
         isRevocationEnabled = false
         addCertStore(CertStore.getInstance("Collection", CollectionCertStoreParameters(certificates)))

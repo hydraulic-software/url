@@ -46,11 +46,19 @@ $manifest = Join-Path $timestampDirectory "manifest"
 $request = Join-Path $timestampDirectory "timestamp.tsq"
 $response = Join-Path $timestampDirectory "timestamp.tsr"
 $temporaryOutput = "$output.tmp"
+
+function Invoke-Zip([string[]] $arguments) {
+    # Archive tools write progress to stdout. Forward it to stderr so the
+    # launcher's stdout remains a single machine-readable output path.
+    & $zip @arguments 2>&1 | ForEach-Object { [Console]::Error.WriteLine($_) }
+    if ($LASTEXITCODE -ne 0) { throw "zip failed with exit code $LASTEXITCODE" }
+}
+
 try {
     # Build the same canonical manifest used by verifiers. It is temporary and
     # is intentionally not added to the package.
     $files = Get-ChildItem -LiteralPath $source -File -Recurse -Force | Where-Object {
-        $_.FullName -ne (Join-Path $source "context.d.ts") -and
+        $_.Name -ne "context.d.ts" -and
         $_.Name -ne "timestamp.tsr"
     }
     if (Get-ChildItem -LiteralPath $source -File -Recurse -Force | Where-Object Name -eq "timestamp.tsr") {
@@ -68,14 +76,14 @@ try {
         $digest = (& $openssl dgst -sha256 $file.FullName | Select-Object -Last 1) -replace '^.*= ', ''
         "$digest  $relative"
     }
-    [IO.File]::WriteAllLines($manifest, $lines, [Text.UTF8Encoding]::new($false))
+    $manifestText = if ($lines.Count -eq 0) { "" } else { [String]::Join("`n", $lines) + "`n" }
+    [IO.File]::WriteAllText($manifest, $manifestText, [Text.UTF8Encoding]::new($false))
 
     # Create the ordinary ZIP before adding the timestamp entry. The timestamp
     # is over the manifest, so changing ZIP metadata does not invalidate it.
     Push-Location $source
     try {
-        & $zip -X -r $temporaryZip . -x context.d.ts */context.d.ts timestamp.tsr
-        if ($LASTEXITCODE -ne 0) { throw "zip failed with exit code $LASTEXITCODE" }
+        Invoke-Zip @("-X", "-r", $temporaryZip, ".", "-x", "context.d.ts", "*/context.d.ts", "timestamp.tsr")
     } finally {
         Pop-Location
     }
@@ -95,8 +103,7 @@ try {
     # completed archive atomically.
     Push-Location $timestampDirectory
     try {
-        & $zip -X $temporaryZip timestamp.tsr
-        if ($LASTEXITCODE -ne 0) { throw "zip failed while adding timestamp.tsr" }
+        Invoke-Zip @("-X", $temporaryZip, "timestamp.tsr")
     } finally {
         Pop-Location
     }

@@ -1323,6 +1323,9 @@ class URLResolverTest {
         (directory / "z.txt").writeText("z")
         (directory / "a.txt").writeText("a")
         (directory / "é.txt").writeText("e")
+        (directory / "nested").createDirectories()
+        (directory / "nested" / "context.d.ts").writeText("excluded")
+        (directory / "nested" / "timestamp.tsr").writeText("excluded")
         (directory / "timestamp.tsr").writeBytes(byteArrayOf(1, 2, 3))
 
         assertEquals(
