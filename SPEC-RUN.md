@@ -67,6 +67,21 @@ A bare `executable` name is resolved using the host's normal command search path
 
 The host keeps resolved cache entries open until the child process exits. This allows future implementations to expose exactly those paths to a process sandbox.
 
+## Timestamped packages
+
+A timestamped `run.zip` may contain a top-level `timestamp.tsr` entry holding a
+DER encoded RFC 3161 timestamp response. The response covers a canonical
+manifest of every other package entry. The manifest uses UTF-8 relative paths
+with `/` separators, sorts records by path bytes, and records each regular
+file's SHA-256 digest as `<digest>  <path>` followed by LF. Package paths may
+not contain newline characters, duplicate entries are invalid, and symbolic
+links are not part of this format.
+
+The manifest is an intermediate verification value and need not be stored in
+the package. An implementation recomputes it after extraction, verifies that
+the timestamp token's message imprint matches it, and only then evaluates
+`run.js`. ZIP ordering, compression, and file timestamps are not covered.
+
 ## Version suffixes
 
 A non-empty `@VERSION` suffix on the locator, before any query or fragment, is removed before local lookup or URL resolution and exposed as `context.ver`. For example, `run example.com/tool@1.2.3` resolves `example.com/tool/run.zip/run.js` and evaluates the package with `context.ver == "1.2.3"`. Without a version suffix, `context.ver == null`.

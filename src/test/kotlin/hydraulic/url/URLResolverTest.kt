@@ -15,6 +15,8 @@ import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.archivers.tar.TarConstants
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
+import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import picocli.CommandLine
@@ -1173,7 +1175,7 @@ class URLResolverTest {
 
     @Test
     fun `bare launch-plan executables use the host command search path`() {
-        val packageFile = Path.of("site/demo/run.js").toAbsolutePath()
+        val packageFile = Path.of("site/r/demo/run.zip.d/run.js").toAbsolutePath()
         val packageDir = packageFile.parent
         val plan = evaluateRunJavaScript(
             packageFile,
@@ -1274,6 +1276,79 @@ class URLResolverTest {
         )
         assertEquals(Path.of("/cache/one"), plan.executable)
         assertEquals(listOf("/cache/two", "/cache/three", "/cache/four"), plan.arguments)
+    }
+
+    @Test
+    fun `make-run-zip JavaScript selects portable packaging tools`() {
+        val packageFile = Path.of("site/r/make-run-zip/run.zip.d/run.js").toAbsolutePath()
+        val packageDir = packageFile.parent
+        val requested = mutableMapOf<String, String>()
+        val plan = evaluateRunJavaScript(
+            packageFile,
+            RunContext("linux", "x86_64", null, listOf("source", "output.zip"), packageDir)
+        ) { urls ->
+            requested.putAll(urls)
+            urls.mapValues { (name, _) -> Path.of("/cache/$name") }
+        }
+
+        assertTrue(requested.getValue("openssl").contains("openssl-3.5.6-linux-x86_64"))
+        assertTrue(requested.getValue("zip").contains("7z2603-linux-x64.tar.xz/7zz"))
+        assertEquals(packageDir.resolve("make-run-zip.sh").toAbsolutePath(), plan.executable)
+        assertEquals(listOf("/cache/openssl", "/cache/zip", "source", "output.zip"), plan.arguments)
+    }
+
+    @Test
+    fun `make-run-zip rejects newlines before creating its manifest`() {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+        val source = (tempDir / "source").createDirectories()
+        Files.createFile(source.resolve("line\nbreak"))
+        val script = Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").toAbsolutePath()
+        val output = tempDir.resolve("output.zip")
+        val process = ProcessBuilder(
+            "/bin/sh", script.toString(), "/missing/openssl", "/missing/zip",
+            source.toString(), output.toString()
+        ).redirectErrorStream(true).start()
+        val result = process.inputStream.bufferedReader().use { it.readText() }
+
+        assertEquals(2, process.waitFor())
+        assertContains(result, "Source file names may not contain newlines")
+        assertFalse(Files.exists(output))
+    }
+
+    @Test
+    fun `make-run-zip PowerShell launcher checks reparse points when PowerShell is available`() {
+        val commandLookup = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+            { command: String -> ProcessBuilder("where.exe", command) }
+        else
+            { command: String -> ProcessBuilder("/bin/sh", "-c", "command -v $command") }
+        val powershell = sequenceOf("pwsh", "powershell")
+            .mapNotNull { command ->
+                runCatching {
+                    commandLookup(command).start().also { process -> process.waitFor() }
+                }.getOrNull()?.takeIf { it.exitValue() == 0 }?.let { command }
+            }
+            .firstOrNull()
+        assumeTrue(powershell != null)
+
+        val source = (tempDir / "source").createDirectories()
+        val outside = (tempDir / "outside").createDirectories()
+        (outside / "secret.txt").writeText("secret")
+        try {
+            Files.createSymbolicLink(source.resolve("link"), outside)
+        } catch (_: UnsupportedOperationException) {
+            return
+        } catch (_: java.nio.file.FileSystemException) {
+            return
+        }
+        val script = Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.ps1").toAbsolutePath()
+        val process = ProcessBuilder(
+            powershell!!, "-NoProfile", "-NonInteractive", "-File", script.toString(),
+            "/missing/openssl.exe", "/missing/7z.exe", source.toString(), tempDir.resolve("output.zip").toString()
+        ).redirectErrorStream(true).start()
+        val result = process.inputStream.bufferedReader().use { it.readText() }
+
+        assertTrue(process.waitFor() != 0)
+        assertContains(result, "Source directory contains unsupported symbolic links")
     }
 
     @Test
@@ -1400,7 +1475,7 @@ class URLResolverTest {
 
     @Test
     fun `cel verifier JavaScript produces portable launch plans`() {
-        val packageFile = Path.of("site/cel-verifier/run.zip.d/run.js").toAbsolutePath()
+        val packageFile = Path.of("site/r/cel-verifier/run.zip.d/run.js").toAbsolutePath()
         val packageDir = packageFile.parent
         val java = tempDir / "java"
         val javaExe = tempDir / "java.exe"
@@ -1476,14 +1551,15 @@ class URLResolverTest {
                 { emptyMap() }
             )
         }
-        assertContains(unsupportedOs.message.orEmpty(), "Unsupported operating system for GraalVM: freebsd")
+        assertContains(unsupportedOs.message.orEmpty(), "Unsupported GraalVM platform: freebsd-x64")
     }
 
     @Test
     fun `unknown GraalVM versions are not hashlocked`() {
-        val sourceDirectory = Path.of("site/cel-verifier/run.zip.d").toAbsolutePath()
+        val sourceDirectory = Path.of("site/r/cel-verifier/run.zip.d").toAbsolutePath()
         val directory = (tempDir / "run.zip.d").createDirectories()
         Files.copy(sourceDirectory / "graalvm.js", directory / "graalvm.js")
+        Files.copy(sourceDirectory / "utils.js", directory / "utils.js")
         val packageFile = directory / "run.js"
         packageFile.writeText(
             """

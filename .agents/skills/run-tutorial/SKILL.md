@@ -62,3 +62,10 @@ On macOS, leave Gatekeeper enabled and distribute signed executables. Do not
 perform user interaction, installation, or OS integration from a package.
 
 See [SPEC-RUN.md](../../../SPEC-RUN.md) for the complete contract.
+
+## Timestamped packages
+
+A timestamped `run.zip` can contain a top-level `timestamp.tsr` entry with a
+DER encoded RFC 3161 timestamp response. The response covers a canonical
+manifest of all other package entries. Implementations recompute that manifest
+after extraction before applying timestamp based compatibility rules.
