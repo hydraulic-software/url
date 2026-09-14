@@ -1323,9 +1323,6 @@ class URLResolverTest {
         (directory / "z.txt").writeText("z")
         (directory / "a.txt").writeText("a")
         (directory / "é.txt").writeText("e")
-        (directory / "nested").createDirectories()
-        (directory / "nested" / "context.d.ts").writeText("excluded")
-        (directory / "nested" / "timestamp.tsr").writeText("excluded")
         (directory / "timestamp.tsr").writeBytes(byteArrayOf(1, 2, 3))
 
         assertEquals(
@@ -1336,6 +1333,18 @@ class URLResolverTest {
             """.trimIndent() + "\n",
             canonicalRunManifest(directory).toString(StandardCharsets.UTF_8)
         )
+    }
+
+    @Test
+    fun `run package verification rejects build-excluded files`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        (directory / "run.js").writeText("export default { executable: \"true\", arguments: [] };")
+        (directory / "nested").createDirectories()
+        (directory / "nested" / "context.d.ts").writeText("untimestamped")
+        (directory / "nested" / "timestamp.tsr").writeText("untimestamped")
+        (directory / "timestamp.tsr").writeText("invalid timestamp")
+
+        assertFailsWith<IllegalArgumentException> { verifyRunPackage(directory) }
     }
 
     @Test

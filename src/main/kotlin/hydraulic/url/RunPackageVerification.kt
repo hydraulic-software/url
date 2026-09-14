@@ -57,13 +57,23 @@ internal fun canonicalRunManifest(packageDir: Path): ByteArray {
             require(!attributes.isSymbolicLink()) {
                 "Run packages may not contain symbolic links: ${root.relativize(path)}"
             }
+            if (path == root.resolve(TIMESTAMP_FILE)) {
+                require(attributes.isRegularFile) {
+                    "$TIMESTAMP_FILE must be a regular file at the package root"
+                }
+                return@forEach
+            }
+            require(path.fileName.toString() != "context.d.ts") {
+                "Run packages must not contain context.d.ts: ${root.relativize(path)}"
+            }
+            require(path.fileName.toString() != TIMESTAMP_FILE) {
+                "Only the package-root timestamp.tsr entry is reserved for timestamps"
+            }
             if (attributes.isDirectory)
                 return@forEach
             require(attributes.isRegularFile) {
                 "Run packages may only contain regular files: ${root.relativize(path)}"
             }
-            if (path.fileName.toString() == "context.d.ts" || path.fileName.toString() == TIMESTAMP_FILE)
-                return@forEach
             files.add(path)
         }
     }

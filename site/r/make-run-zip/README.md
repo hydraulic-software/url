@@ -15,6 +15,9 @@ timestamp response. The response covers a canonical manifest of the other
 files; the manifest is generated temporarily and is not included in the archive.
 The `run` command verifies the timestamp signature, the timestamping
 certificate, and the manifest before evaluating `run.js`.
+Packages containing a file named `context.d.ts` are rejected during
+verification, so the build-time exclusion cannot be used to hide untimestamped
+content.
 The manifest sorts UTF-8 relative paths and records each file as
 `<sha256>  <path>`. The
 default timestamp authority is DigiCert; a third argument can select another

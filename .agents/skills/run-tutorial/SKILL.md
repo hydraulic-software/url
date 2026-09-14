@@ -68,4 +68,6 @@ See [SPEC-RUN.md](../../../SPEC-RUN.md) for the complete contract.
 A timestamped `run.zip` can contain a top-level `timestamp.tsr` entry with a
 DER encoded RFC 3161 timestamp response. The response covers a canonical
 manifest of all other package entries. Implementations recompute that manifest
-after extraction before applying timestamp based compatibility rules.
+after extraction before applying timestamp based compatibility rules. Package
+builders omit `context.d.ts`; timestamped packages containing that file are
+invalid rather than leaving it outside the manifest.

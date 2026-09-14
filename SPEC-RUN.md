@@ -77,6 +77,11 @@ file's SHA-256 digest as `<digest>  <path>` followed by LF. Package paths may
 not contain newline characters, duplicate entries are invalid, and symbolic
 links are not part of this format.
 
+Package builders omit files named `context.d.ts`. A timestamped package that
+contains such a file is invalid rather than treating it as an unverified
+exception. The package-root `timestamp.tsr` entry is excluded from its own
+manifest; another `timestamp.tsr` entry is invalid.
+
 The manifest is an intermediate verification value and need not be stored in
 the package. An implementation recomputes it after extraction, verifies the
 RFC 3161 CMS signature and timestamping certificate against the host's trusted
