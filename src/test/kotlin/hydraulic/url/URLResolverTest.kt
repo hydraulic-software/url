@@ -1295,6 +1295,8 @@ class URLResolverTest {
         assertTrue(requested.getValue("zip").contains("7z2603-linux-x64.tar.xz/7zz"))
         assertEquals(packageDir.resolve("make-run-zip.sh").toAbsolutePath(), plan.executable)
         assertEquals(listOf("/cache/openssl", "/cache/zip", "source", "output.zip"), plan.arguments)
+        assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").readText(), "-cert")
+        assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.ps1").readText(), "-cert")
     }
 
     @Test

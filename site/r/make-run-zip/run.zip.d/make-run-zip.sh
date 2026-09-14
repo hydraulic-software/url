@@ -123,7 +123,9 @@ done > "$manifest"
 
 create_archive "$temporary_zip"
 
-"$openssl" ts -query -data "$manifest" -sha256 -no_nonce -out "$request"
+# Ask the TSA to include its signer certificate so verifiers can check the
+# CMS signature without needing a separate certificate download.
+"$openssl" ts -query -data "$manifest" -sha256 -no_nonce -cert -out "$request"
 curl -fsS \
   -H 'Content-Type: application/timestamp-query' \
   -H 'Accept: application/timestamp-reply' \

@@ -80,7 +80,9 @@ try {
         Pop-Location
     }
 
-    & $openssl ts -query -data $manifest -sha256 -no_nonce -out $request
+    # Request the signer certificate so verifiers can validate the CMS token
+    # without needing a separate certificate download.
+    & $openssl ts -query -data $manifest -sha256 -no_nonce -cert -out $request
     if ($LASTEXITCODE -ne 0) { throw "openssl ts query failed with exit code $LASTEXITCODE" }
 
     Invoke-WebRequest -Uri $tsa -Method Post -ContentType "application/timestamp-query" `
