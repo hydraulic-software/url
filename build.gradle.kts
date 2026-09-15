@@ -8,6 +8,13 @@ plugins {
     application
 }
 
+// Oracle's last JDK 25 build for macOS Intel is 25.0.1. Truffle Native Image
+// features require the embedded language artifacts to match that compiler.
+val graalVersion = if (
+    System.getProperty("os.name") == "Mac OS X" &&
+    System.getProperty("os.arch") in setOf("x86_64", "amd64")
+) "25.0.1" else "25.0.4"
+
 dependencies {
     api(project(":hydraulic.diskcache"))
     implementation(project(":hydraulic.archives"))
@@ -21,8 +28,8 @@ dependencies {
     // otherwise corrupts terminal dimensions and can segfault during redraw.
     implementation("com.github.ajalt.mordant:mordant:3.1.0")
     implementation(libs.info.picocli)
-    implementation("org.graalvm.polyglot:polyglot:25.0.4")
-    implementation("org.graalvm.polyglot:js:25.0.4") {
+    implementation("org.graalvm.polyglot:polyglot:$graalVersion")
+    implementation("org.graalvm.polyglot:js:$graalVersion") {
         // Run plans are tiny and short-lived. Do not carry Truffle's
         // optimizing runtime and compiler into the native executable.
         exclude(group = "org.graalvm.truffle", module = "truffle-runtime")
