@@ -5,7 +5,6 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.X509CertificateHolder
 import org.bouncycastle.cms.CMSSignedData
 import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder
-import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.tsp.TimeStampResponse
 import org.bouncycastle.util.Selector
 import java.nio.file.Files
@@ -14,7 +13,6 @@ import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import java.security.KeyStore
 import java.security.MessageDigest
-import java.security.Security
 import java.security.cert.CollectionCertStoreParameters
 import java.security.cert.CertStore
 import java.security.cert.CertPathBuilder
@@ -86,7 +84,6 @@ internal fun canonicalRunManifest(packageDir: Path): ByteArray {
 }
 
 private fun verifyTimestamp(responseBytes: ByteArray, manifest: ByteArray) {
-    ensureBouncyCastle()
     val response = try {
         TimeStampResponse(responseBytes)
     } catch (e: Exception) {
@@ -111,7 +108,7 @@ private fun verifyTimestamp(responseBytes: ByteArray, manifest: ByteArray) {
     @Suppress("UNCHECKED_CAST")
     val signer = signedData.certificates.getMatches(token.sid as Selector<X509CertificateHolder>).singleOrNull()
         ?: throw IllegalArgumentException("Timestamp token does not contain exactly one signer certificate")
-    val signerCertificate = JcaX509CertificateConverter().setProvider("BC").getCertificate(signer)
+    val signerCertificate = JcaX509CertificateConverter().getCertificate(signer)
     require(signerCertificate.extendedKeyUsage?.let { it.size == 1 && TIMESTAMPING_EKU in it } == true) {
         "Timestamp signer certificate is not authorized for timestamping"
     }
@@ -119,7 +116,7 @@ private fun verifyTimestamp(responseBytes: ByteArray, manifest: ByteArray) {
         "Timestamp signer certificate must mark timestamping usage as critical"
     }
     signerCertificate.checkValidity(Date(info.genTime.time))
-    token.validate(JcaSimpleSignerInfoVerifierBuilder().setProvider("BC").build(signer))
+    token.validate(JcaSimpleSignerInfoVerifierBuilder().build(signer))
     validateTimestampSigner(signedData, signerCertificate, info.genTime)
 }
 
@@ -129,7 +126,7 @@ private fun validateTimestampSigner(signedData: CMSSignedData, signer: X509Certi
     val trustManager = trustManagerFactory.trustManagers.filterIsInstance<X509TrustManager>().singleOrNull()
         ?: throw IllegalArgumentException("The runtime does not provide an X.509 trust manager")
     val certificates = signedData.certificates.getMatches(null).map {
-        JcaX509CertificateConverter().setProvider("BC").getCertificate(it)
+        JcaX509CertificateConverter().getCertificate(it)
     }
     val selector = X509CertSelector().also { it.certificate = signer }
     val trustAnchors = trustManager.acceptedIssuers.map { TrustAnchor(it, null) }.toSet()
@@ -143,11 +140,6 @@ private fun validateTimestampSigner(signedData: CMSSignedData, signer: X509Certi
     } catch (e: Exception) {
         throw IllegalArgumentException("Timestamp signer certificate is not trusted", e)
     }
-}
-
-private fun ensureBouncyCastle() {
-    if (Security.getProvider("BC") == null)
-        Security.addProvider(BouncyCastleProvider())
 }
 
 private fun sha256(path: Path): String {

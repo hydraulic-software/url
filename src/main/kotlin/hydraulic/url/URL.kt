@@ -23,6 +23,7 @@ import java.io.BufferedReader
 import java.io.PrintStream
 import java.nio.file.Path
 import java.nio.file.Files
+import java.util.Locale
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.ExecutionException
@@ -78,6 +79,9 @@ class URL(
         description = ["Write progress indicators to stderr: bar (animated unicode progress bar), term (OSC escapes for terminal emulator rendered bars), never, plain, or json (default: ${'$'}{DEFAULT-VALUE}). If stderr isn't a terminal then bar/term have no effect."]
     )
     lateinit var progress: String
+
+    @Option(names = ["--verbose"], description = ["Print detailed failure diagnostics, including stack traces."])
+    var verbose: Boolean = verboseErrors(environment)
 
     @Mixin
     lateinit var downloadPolicy: DownloadPolicy
@@ -342,15 +346,29 @@ fun main(args: Array<String>) {
     kotlin.system.exitProcess(exitCode)
 }
 
-internal fun commandLine(invocationName: String = "url"): CommandLine {
+internal fun commandLine(invocationName: String = "url", environment: Map<String, String> = System.getenv()): CommandLine {
     val normalizedName = invocationName.substringBeforeLast('.').lowercase()
     val runner = normalizedName == "run"
-    return CommandLine(if (runner) Run() else URL())
+    val command = if (runner) Run(environment = environment) else URL(environment = environment)
+    return CommandLine(command)
         .apply { if (runner) isStopAtPositional = true }
         .setExecutionExceptionHandler { exception, commandLine, _ ->
-            commandLine.err.println("${commandLine.commandName}: ${exception.message ?: exception.javaClass.simpleName}")
+            val message = exception.message ?: exception.javaClass.simpleName
+            commandLine.err.println("${commandLine.commandName}: $message")
+            val verbose = when (val userObject = commandLine.commandSpec.userObject()) {
+                is Run -> userObject.verbose
+                is URL -> userObject.verbose
+                else -> false
+            }
+            if (verbose)
+                exception.printStackTrace(commandLine.err)
             commandLine.commandSpec.exitCodeOnExecutionException()
         }
 }
+
+private const val VERBOSE_ENVIRONMENT = "URL_VERBOSE"
+
+internal fun verboseErrors(environment: Map<String, String>): Boolean =
+    environment[VERBOSE_ENVIRONMENT]?.lowercase(Locale.ROOT) !in setOf(null, "", "0", "false", "no", "off")
 
 internal fun processInvocationName(): String = Path.of(currentExecutableName()).fileName.toString()

@@ -57,6 +57,9 @@ class Run(
     )
     lateinit var progress: String
 
+    @Option(names = ["--verbose"], description = ["Print detailed failure diagnostics, including stack traces."])
+    var verbose: Boolean = verboseErrors(environment)
+
     @Mixin
     lateinit var downloadPolicy: DownloadPolicy
 

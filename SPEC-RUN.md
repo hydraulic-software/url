@@ -61,7 +61,7 @@ URL values are passed to the ordinary URL resolver unchanged, including archive 
 
 The JavaScript package cannot access host classes, arbitrary files, sockets, environment variables, native APIs, processes, or threads. The module loader may read imported JavaScript files from within the package. Implementations may use a JavaScript engine embedded in the host or a separate JavaScript subprocess, but must preserve this capability boundary and must not grant the package a direct process-execution function.
 
-JavaScript errors, invalid URL maps, invalid launch plans, and resolver errors cause `run` to fail without launching a process. Diagnostics go to stderr.
+JavaScript errors, invalid URL maps, invalid launch plans, and resolver errors cause `run` to fail without launching a process. Diagnostics go to stderr. The command may provide a verbose mode that includes exception stack traces; this implementation enables it with `--verbose` or `URL_VERBOSE=1`.
 
 A package may use files in its directory as executable or argument data. A package that needs more complicated behavior should include a separate executable or script and return it in the launch plan.
 

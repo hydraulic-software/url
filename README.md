@@ -31,6 +31,9 @@ $ file `url hydraulic.dev`
 
 Pass `-r` or `--refresh` to ignore a cached HTTP response and download it again.
 
+By default, command failures print a concise diagnostic. Pass `--verbose`, or
+set `URL_VERBOSE=1`, to include the full exception and cause stack trace.
+
 ## Building
 
 Run `./build.sh nativePair` to build the native executables. If `url` is already

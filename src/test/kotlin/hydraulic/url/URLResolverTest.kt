@@ -1065,6 +1065,31 @@ class URLResolverTest {
     }
 
     @Test
+    fun `command line prints a stack trace in verbose mode`() {
+        val stderr = StringWriter()
+        val exitCode = commandLine().apply { err = PrintWriter(stderr) }.execute(
+            "--verbose", "--cache-dir", (tempDir / "verbose-cli-cache").toString(), "file:///tmp/not-http"
+        )
+
+        assertEquals(1, exitCode)
+        assertContains(stderr.toString(), "url: Not an HTTP(S) URI: file:///tmp/not-http")
+        assertContains(stderr.toString(), "IllegalArgumentException")
+        assertContains(stderr.toString(), "at hydraulic.url")
+    }
+
+    @Test
+    fun `URL_VERBOSE enables detailed command line failures`() {
+        val stderr = StringWriter()
+        val exitCode = commandLine(environment = mapOf("URL_VERBOSE" to "1"))
+            .apply { err = PrintWriter(stderr) }
+            .execute("--cache-dir", (tempDir / "environment-cli-cache").toString(), "file:///tmp/not-http")
+
+        assertEquals(1, exitCode)
+        assertContains(stderr.toString(), "IllegalArgumentException")
+        assertContains(stderr.toString(), "at hydraulic.url")
+    }
+
+    @Test
     fun `command line distinguishes usage errors from execution failures`() {
         assertEquals(2, commandLine().execute("--does-not-exist"))
         assertEquals(1, commandLine().execute("--print0", "--print-separator=:"))
