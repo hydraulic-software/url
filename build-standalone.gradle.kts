@@ -10,6 +10,13 @@ plugins {
 
 repositories { mavenCentral() }
 
+// Oracle's last JDK 25 build for macOS Intel is 25.0.1. Truffle Native Image
+// features require the embedded language artifacts to match that compiler.
+val graalVersion = if (
+    System.getProperty("os.name") == "Mac OS X" &&
+    System.getProperty("os.arch") in setOf("x86_64", "amd64")
+) "25.0.1" else "25.0.4"
+
 dependencies {
     implementation(fileTree("libs") { include("*.jar") })
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.4.10")
@@ -26,8 +33,8 @@ dependencies {
     // variadic ioctl entry point with the wrong ABI when detecting TTY size.
     implementation("com.github.ajalt.mordant:mordant:3.1.0")
     implementation("info.picocli:picocli:4.7.6")
-    implementation("org.graalvm.polyglot:polyglot:25.0.4")
-    implementation("org.graalvm.polyglot:js:25.0.4")
+    implementation("org.graalvm.polyglot:polyglot:$graalVersion")
+    implementation("org.graalvm.polyglot:js:$graalVersion")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
     kapt("info.picocli:picocli-codegen:4.7.6")
 
