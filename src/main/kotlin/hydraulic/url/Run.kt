@@ -154,11 +154,27 @@ internal fun runArchitecture(architecture: String = System.getProperty("os.arch"
     }
 
 internal fun localRunPackage(target: String): Path? {
-    val directory = runCatching { Path.of(target) }.getOrNull()?.takeIf(Files::isDirectory) ?: return null
+    val path = runCatching { Path.of(target) }.getOrNull()
+    if (path == null) {
+        require(!looksLikeLocalPath(target)) { "Invalid local run path: $target" }
+        return null
+    }
+    val directory = path.takeIf(Files::isDirectory)
+    if (directory == null) {
+        require(!looksLikeLocalPath(target)) { "Local run directory does not exist: $path" }
+        return null
+    }
     val packagePath = directory.resolve("run.js").toAbsolutePath()
     require(Files.isRegularFile(packagePath)) { "Local run directory does not contain run.js: $directory" }
     return packagePath
 }
+
+private fun looksLikeLocalPath(target: String): Boolean =
+    target == "." || target == ".." ||
+        target.startsWith("./") || target.startsWith("../") ||
+        target.startsWith(".\\") || target.startsWith("..\\") ||
+        target.startsWith("/") || target.startsWith("\\") ||
+        runCatching { Path.of(target).isAbsolute }.getOrDefault(false)
 
 internal fun runTargetURI(uri: URI): URI {
     val path = uri.rawPath.orEmpty()

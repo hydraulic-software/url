@@ -1170,7 +1170,18 @@ class URLResolverTest {
         script.writeText("urls({}); export default { executable: \"/bin/true\", arguments: [] };\n")
 
         assertEquals(script.toAbsolutePath(), localRunPackage(directory.toString()))
-        assertEquals(null, localRunPackage((tempDir / "missing").toString()))
+        assertEquals(null, localRunPackage("missing-run-package"))
+    }
+
+    @Test
+    fun `missing explicit local run paths do not fall through to URL resolution`() {
+        val relative = "./missing-run-package-${tempDir.fileName}"
+        val absolute = tempDir.resolve("missing-run-package").toString()
+
+        for (target in listOf(relative, absolute)) {
+            val failure = assertFailsWith<IllegalArgumentException> { localRunPackage(target) }
+            assertContains(failure.message.orEmpty(), "Local run directory does not exist")
+        }
     }
 
     @Test

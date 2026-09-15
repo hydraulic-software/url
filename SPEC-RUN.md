@@ -5,6 +5,10 @@ The `run` command takes as its first argument either:
 1. An HTTP or HTTPS URL. If the scheme is missing, `https://` is inferred. `/run.zip/` is appended to a directory-like URL and the resulting resource is resolved using the algorithm defined in the [URL spec](SPEC.md).
 2. A directory containing the same files that a `run.zip` package would contain.
 
+An explicitly relative path beginning with `./` or `../`, or an absolute path,
+is always treated as a local directory. A missing explicit local directory is
+an error and is not converted into a URL.
+
 The URL or directory name can have a version string after an `@` character. The version is exposed to the package as `context.ver`.
 
 Inside the zip or directory there must be a `run.js` file. It is evaluated as an ECMAScript module by a JavaScript engine supplied by the implementation. The package should be a small launch description; downloaded programs belong in the URL cache.

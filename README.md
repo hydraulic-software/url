@@ -117,6 +117,9 @@ remaining arguments:
 $ run ./run.zip.d --help
 ```
 
+Paths beginning with `./`, `../`, or `/` are always treated as local paths;
+missing paths fail instead of being interpreted as URLs.
+
 The package accesses `context.os`, `context.arch`, nullable `context.ver`,
 `context.args`, and `context.packageDir`. It calls `urls()` with an array of
 URLs or a map whose values are URLs or arrays of URLs; the host resolves all
