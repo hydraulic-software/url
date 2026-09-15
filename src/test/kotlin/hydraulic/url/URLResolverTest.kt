@@ -1133,8 +1133,10 @@ class URLResolverTest {
             URI("https://example.com/tools/run.zip/run.js?channel=beta#sha256=abc"),
             runTargetURI(URI("https://example.com/tools/?channel=beta#sha256=abc"))
         )
+        assertEquals(URI("https://example.com/tools/run.zip/run.js"), runTargetURI(URI("https://example.com/tools")))
         assertEquals(URI("https://example.com/tools/run.zip/run.js"), runTargetURI(URI("https://example.com/tools/")))
         assertEquals(URI("https://example.com/tool.js"), runTargetURI(URI("https://example.com/tool.js")))
+        assertEquals(URI("https://example.com/tool.zip"), runTargetURI(URI("https://example.com/tool.zip")))
     }
 
     @Test

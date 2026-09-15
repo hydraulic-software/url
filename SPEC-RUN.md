@@ -2,7 +2,7 @@
 
 The `run` command takes as its first argument either:
 
-1. An HTTP or HTTPS URL. If the scheme is missing, `https://` is inferred. `/run.zip/` is appended to a directory-like URL and the resulting resource is resolved using the algorithm defined in the [URL spec](SPEC.md).
+1. An HTTP or HTTPS URL. If the scheme is missing, `https://` is inferred. `/run.zip/` is appended to a directory-like URL, including one without a trailing slash when its final path component has no filename suffix, and the resulting resource is resolved using the algorithm defined in the [URL spec](SPEC.md).
 2. A directory containing the same files that a `run.zip` package would contain.
 
 An explicitly relative path beginning with `./` or `../`, or an absolute path,

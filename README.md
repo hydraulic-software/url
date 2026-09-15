@@ -120,6 +120,9 @@ $ run ./run.zip.d --help
 Paths beginning with `./`, `../`, or `/` are always treated as local paths;
 missing paths fail instead of being interpreted as URLs.
 
+The black-box compliance checks can be run against a native executable with
+`RUN_BIN=./build/native/nativeCompile/run python3 scripts/run-compliance.py`.
+
 The package accesses `context.os`, `context.arch`, nullable `context.ver`,
 `context.args`, and `context.packageDir`. It calls `urls()` with an array of
 URLs or a map whose values are URLs or arrays of URLs; the host resolves all

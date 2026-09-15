@@ -178,7 +178,9 @@ private fun looksLikeLocalPath(target: String): Boolean =
 
 internal fun runTargetURI(uri: URI): URI {
     val path = uri.rawPath.orEmpty()
-    if (path.isNotEmpty() && !path.endsWith('/'))
+    val finalComponent = path.substringAfterLast('/')
+    val hasFilenameSuffix = finalComponent.lastIndexOf('.') > 0
+    if (path.isNotEmpty() && !path.endsWith('/') && hasFilenameSuffix)
         return uri
     val suffix = "run.zip/run.js"
     val text = uri.toASCIIString()
