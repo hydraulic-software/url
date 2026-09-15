@@ -27,8 +27,8 @@ RFC 3161 HTTP endpoint:
 run https://example.com/make-run-zip -- ./my-tool run.zip http://tsa.example/
 ```
 
-On Unix, the launcher uses `openssl` and `zip` from `PATH` when available and
-falls back to the pinned downloads otherwise. The fallback OpenSSL archives are
-third-party builds because the OpenSSL project publishes source archives rather
-than portable binaries. Unix hosts also need the system `curl` command to
-submit the timestamp request; Windows uses its PowerShell HTTP client.
+On Unix, the launcher requires `openssl` from `PATH` and uses `zip` from `PATH`
+when available, falling back to the pinned 7-Zip download otherwise. Unix
+hosts also need the system `curl` command to submit the timestamp request;
+Windows uses its PowerShell HTTP client and a pinned OpenSSL fallback because
+Windows does not provide an `openssl` command as a standard system tool.

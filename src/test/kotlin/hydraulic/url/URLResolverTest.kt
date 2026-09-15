@@ -1290,7 +1290,7 @@ class URLResolverTest {
     }
 
     @Test
-    fun `make-run-zip JavaScript selects portable packaging tools`() {
+    fun `make-run-zip JavaScript selects the portable zip fallback`() {
         val packageFile = Path.of("site/r/make-run-zip/run.zip.d/run.js").toAbsolutePath()
         val packageDir = packageFile.parent
         val requested = mutableMapOf<String, String>()
@@ -1302,10 +1302,11 @@ class URLResolverTest {
             urls.mapValues { (name, _) -> Path.of("/cache/$name") }
         }
 
-        assertTrue(requested.getValue("openssl").contains("openssl-3.5.6-linux-x86_64"))
+        assertEquals(setOf("zip"), requested.keys)
         assertTrue(requested.getValue("zip").contains("7z2603-linux-x64.tar.xz/7zz"))
         assertEquals(packageDir.resolve("make-run-zip.sh").toAbsolutePath(), plan.executable)
-        assertEquals(listOf("/cache/openssl", "/cache/zip", "source", "output.zip"), plan.arguments)
+        assertEquals(listOf("/cache/zip", "source", "output.zip"), plan.arguments)
+        assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").readText(), "OpenSSL is required on PATH")
         assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").readText(), "-cert")
         assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.ps1").readText(), "-cert")
     }
@@ -1317,10 +1318,18 @@ class URLResolverTest {
         Files.createFile(source.resolve("line\nbreak"))
         val script = Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").toAbsolutePath()
         val output = tempDir.resolve("output.zip")
+        val fakeBin = (tempDir / "bin").createDirectories()
+        for (tool in listOf("openssl", "zip")) {
+            val fake = fakeBin.resolve(tool)
+            Files.createFile(fake)
+            fake.toFile().setExecutable(true)
+        }
         val process = ProcessBuilder(
-            "/bin/sh", script.toString(), "/missing/openssl", "/missing/zip",
+            "/bin/sh", script.toString(), "/missing/zip",
             source.toString(), output.toString()
-        ).redirectErrorStream(true).start()
+        ).redirectErrorStream(true).apply {
+            environment()["PATH"] = "${fakeBin}:/usr/bin:/bin"
+        }.start()
         val result = process.inputStream.bufferedReader().use { it.readText() }
 
         assertEquals(2, process.waitFor())

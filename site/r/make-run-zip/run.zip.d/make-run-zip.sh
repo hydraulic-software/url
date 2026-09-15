@@ -1,9 +1,8 @@
 #!/bin/sh
 set -eu
 
-fallback_openssl=$1
-fallback_zip=$2
-shift 2
+fallback_zip=$1
+shift
 
 source=${1:-.}
 output=${2:-run.zip}
@@ -20,16 +19,12 @@ case "$output" in
     ;;
 esac
 
-# Prefer the host's normal tools. The run.js package still resolves pinned
-# fallback binaries, but they are only used when one of these commands is
-# unavailable on PATH.
-system_openssl=$(command -v openssl 2>/dev/null || true)
-if [ -n "$system_openssl" ]; then
-  openssl=$system_openssl
-  openssl_source=system
-else
-  openssl=$fallback_openssl
-  openssl_source=downloaded
+# OpenSSL's timestamp functionality is required for this tool. Unix hosts
+# must provide it because there is no stable portable binary source to pin.
+openssl=$(command -v openssl 2>/dev/null || true)
+if [ -z "$openssl" ]; then
+  echo "OpenSSL is required on PATH to create timestamped run.zip files" >&2
+  exit 2
 fi
 
 system_zip=$(command -v zip 2>/dev/null || true)
@@ -39,22 +34,6 @@ if [ -n "$system_zip" ]; then
 else
   zip=$fallback_zip
   zip_source=downloaded
-fi
-
-# The downloaded OpenSSL build has libraries and configuration beside its
-# executable. System OpenSSL already knows its own installation layout.
-if [ "$openssl_source" = downloaded ]; then
-  openssl_bin_dir=$(CDPATH= cd -- "$(dirname -- "$openssl")" && pwd -P)
-  if [ "$(uname -s)" = Darwin ]; then
-    DYLD_LIBRARY_PATH="$openssl_bin_dir/../lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-    export DYLD_LIBRARY_PATH
-  else
-    LD_LIBRARY_PATH="$openssl_bin_dir/../lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    export LD_LIBRARY_PATH
-  fi
-  OPENSSL_CONF="$openssl_bin_dir/../ssl/openssl.cnf"
-  OPENSSL_MODULES="$openssl_bin_dir/../lib/ossl-modules"
-  export OPENSSL_CONF OPENSSL_MODULES
 fi
 
 # The system zip and the downloaded 7-Zip console binary have different
