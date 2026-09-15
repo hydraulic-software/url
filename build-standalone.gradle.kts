@@ -27,7 +27,12 @@ dependencies {
     implementation("com.github.ajalt.mordant:mordant:3.1.0")
     implementation("info.picocli:picocli:4.7.6")
     implementation("org.graalvm.polyglot:polyglot:25.0.4")
-    implementation("org.graalvm.polyglot:js:25.0.4")
+    implementation("org.graalvm.polyglot:js:25.0.4") {
+        // Run plans are tiny and short-lived. Do not carry Truffle's
+        // optimizing runtime and compiler into the native executable.
+        exclude(group = "org.graalvm.truffle", module = "truffle-runtime")
+        exclude(group = "org.graalvm.truffle", module = "truffle-enterprise")
+    }
     implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
     kapt("info.picocli:picocli-codegen:4.7.6")
 
@@ -115,6 +120,11 @@ graalvmNative {
                     JvmVendorSpec.matching("GraalVM Community")
             )
         })
+        // JavaScript launch plans only need Truffle's interpreter. The
+        // dependency exclusions above remove the optimizing runtime; this
+        // property makes the native-image choice explicit as well.
+        buildArgs.add("-Dtruffle.UseFallbackRuntime=true")
+        buildArgs.add("-Dpolyglot.engine.WarnInterpreterOnly=false")
         jvmArgs(application.applicationDefaultJvmArgs)
         buildArgs.add("-Os")
         buildArgs.add("--initialize-at-run-time=hydraulic,org.tinylog")
