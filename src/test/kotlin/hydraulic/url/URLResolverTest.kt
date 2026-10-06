@@ -32,6 +32,7 @@ import java.nio.file.Path
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.HexFormat
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -351,8 +352,8 @@ class URLResolverTest {
     fun `extracted archive cache keys are human readable documents`() {
         val archive = tempDir / "tool.zip"
         archive.writeBytes("contents".toByteArray())
-        assertTrue(extractedArchiveCacheKey(archive).matches(
-            Regex("Extracted archive\\nLayout version: 3\\nFile name: tool\\.zip\\nSHA-256: [a-z0-9]+")
+        assertTrue(extractedArchiveCacheKey(archive, quarantined = true).matches(
+            Regex("Extracted archive\\nLayout version: 4\\nFile name: tool\\.zip\\nSHA-256: [a-z0-9]+\\nQuarantined: true")
         ))
     }
 
@@ -763,14 +764,15 @@ class URLResolverTest {
     }
 
     @Test
-    fun `macOS Mach-O results receive quarantine unless opted out`() = withServer { server ->
+    fun `macOS downloaded files receive quarantine unless opted out`() = withServer { server ->
         if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true))
             return@withServer
         val requests = AtomicInteger()
         server.createContext("/") { exchange ->
             requests.incrementAndGet()
             exchange.responseHeaders.add("Cache-Control", "max-age=3600")
-            exchange.respond(bytes(0xfeedfacf.toInt()) + " payload".toByteArray())
+            // Like a browser download, quarantine does not depend on the content being executable.
+            exchange.respond("plain text payload".toByteArray())
         }
 
         makeCache().use { cache ->
@@ -783,6 +785,85 @@ class URLResolverTest {
             }
         }
         assertEquals(1, requests.get())
+    }
+
+    @Test
+    fun `macOS extracted archives are quarantined throughout unless opted out`() = withServer { server ->
+        if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true))
+            return@withServer
+        val zip = zipOf("Tool.app/Contents/MacOS/Tool" to "app binary", "bin/tool" to "loose binary", "README" to "text")
+        val tarball = tarGzOf("tool-1.0/bin/tool" to "loose binary", "tool-1.0/README" to "text")
+        server.createContext("/") {
+            when (it.requestURI.path) {
+                "/tool.zip" -> it.respond(zip)
+                "/tool.tar.gz" -> it.respond(tarball)
+                else -> it.respond404()
+            }
+        }
+        fun Path.quarantinedEntries(): Map<String, Boolean> = Files.walk(this).use { paths ->
+            paths.toList().associate { relativize(it).toString() to ("com.apple.quarantine" in it.macExtendedAttributes()) }
+        }
+
+        makeCache().use { cache ->
+            for (path in listOf("/tool.zip/", "/tool.tar.gz/")) {
+                URLResolver(cache).resolve(server.uri(path)).use { resolved ->
+                    val entries = resolved.path.quarantinedEntries()
+                    assertTrue(entries.size > 3, "$path: $entries")
+                    assertTrue(entries.values.all { it }, "$path: $entries")
+                }
+                URLResolver(cache, gatekeeper = false).resolve(server.uri(path)).use { resolved ->
+                    val entries = resolved.path.quarantinedEntries()
+                    assertTrue(entries.values.none { it }, "$path: $entries")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `macOS revalidated streamed tarballs stay quarantined`() {
+        if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true))
+            return
+        val archiveURI = URI("https://example.com/tool.tar.gz")
+        val tarball = tarGzOf("tool-1.0/bin/tool" to "loose binary")
+        val statuses = mutableListOf<Int>()
+        val transport = HttpTransport { uri, headers ->
+            if (uri != archiveURI)
+                return@HttpTransport HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+            val status = if (headers["If-None-Match"] == "\"v1\"") 304 else 200
+            statuses += status
+            val responseHeaders = mapOf("Cache-Control" to listOf("no-cache"), "ETag" to listOf("\"v1\""))
+            HttpTransport.Response(status, responseHeaders, ByteArrayInputStream(if (status == 200) tarball else byteArrayOf()))
+        }
+
+        makeCache().use { cache ->
+            repeat(2) {
+                URLResolver(cache, transport = transport).resolve(URI("$archiveURI/tool-1.0/")).use { resolved ->
+                    assertTrue("com.apple.quarantine" in (resolved.path / "bin/tool").macExtendedAttributes())
+                    assertTrue("com.apple.quarantine" in resolved.path.macExtendedAttributes())
+                }
+            }
+        }
+        assertEquals(listOf(200, 304), statuses)
+    }
+
+    @Test
+    fun `macOS quarantine handles read-only files`() {
+        if (!System.getProperty("os.name").startsWith("Mac", ignoreCase = true))
+            return
+        val tree = tempDir / "tree"
+        val file = tree / "legal" / "LICENSE"
+        file.parent.createDirectories()
+        file.writeText("read only")
+        val readOnly = PosixFilePermissions.fromString("r--r--r--")
+        Files.setPosixFilePermissions(file, readOnly)
+
+        tree.quarantineTree()
+        assertTrue("com.apple.quarantine" in file.macExtendedAttributes())
+        assertEquals(readOnly, Files.getPosixFilePermissions(file))
+
+        file.applyGatekeeperQuarantine(enabled = false)
+        assertFalse("com.apple.quarantine" in file.macExtendedAttributes())
+        assertEquals(readOnly, Files.getPosixFilePermissions(file))
     }
 
     @Test

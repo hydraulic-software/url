@@ -292,10 +292,12 @@ class URLResolver private constructor(
         verifiedArchiveHash: String? = null
     ): ResolvedURL {
         val extracted = completeCache.getAndCustomizeEntry(
-            extractedArchiveCacheKey(archiveFile, verifiedArchiveHash),
+            extractedArchiveCacheKey(archiveFile, quarantinesResults(gatekeeper), verifiedArchiveHash),
             rerun = false
         ) { destination ->
             extractSafeLocalArchive(archiveFile, destination, minimumFreeSpaceBytes)
+            if (quarantinesResults(gatekeeper))
+                destination.quarantineTree()
             DiskCache.EntryComputationResult()
         }
         return selectArchiveMember(archive, extracted)
@@ -308,7 +310,7 @@ class URLResolver private constructor(
     ): ResolvedURL {
         // We're going to populate a cache entry with the contents of the archive
         // whilst simultaneously downloading it.
-        val key = streamedArchiveCacheKey(identityArchive.archiveURI)
+        val key = streamedArchiveCacheKey(identityArchive.archiveURI, quarantinesResults(gatekeeper))
         val existing: DiskCache.OpenedEntry? = completeCache.lookup(key)
         // This path bypasses HttpResourceCache, so refresh must bypass both the
         // extracted entry's freshness check and its conditional request headers.
@@ -352,6 +354,9 @@ class URLResolver private constructor(
                     "SHA-256 mismatch: expected $expectedArchiveHash but resolved archive has $actualHash"
                 }
             }
+            // copyDirectory does not carry quarantine over from a revalidated extraction.
+            if (quarantinesResults(gatekeeper))
+                destination.quarantineTree()
             DiskCache.EntryComputationResult(
                 metadata = streamedArchiveMetadata(response, previousMetadata, expectedArchiveHash)
             )

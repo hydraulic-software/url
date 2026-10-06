@@ -63,17 +63,24 @@ private fun isMachOContent(prefix: ByteArray): Boolean {
     return architectureCount in 1u..32u
 }
 
+/** Quarantines or un-quarantines a downloaded file, as a web browser would mark it. */
 internal fun Path.applyGatekeeperQuarantine(enabled: Boolean) {
     if (!IS_MAC_OS || !isRegularFile())
-        return
-    val prefix = Files.newInputStream(this).use { it.readNBytes(8) }
-    if (!isMachOContent(prefix))
         return
     if (enabled)
         MacOSQuarantine.apply(this)
     else
         MacOSQuarantine.remove(this)
 }
+
+/** Quarantines every file and directory in a fresh extraction, as Archive Utility does for a downloaded archive. */
+internal fun Path.quarantineTree() {
+    if (IS_MAC_OS)
+        MacOSQuarantine.applyTree(this)
+}
+
+/** Whether results are quarantined, which changes the content of extracted archive cache entries. */
+internal fun quarantinesResults(gatekeeper: Boolean): Boolean = gatekeeper && IS_MAC_OS
 
 private fun ByteArray.uint32(offset: Int, littleEndian: Boolean): UInt {
     val bytes = if (littleEndian) (offset + 3 downTo offset) else (offset..offset + 3)

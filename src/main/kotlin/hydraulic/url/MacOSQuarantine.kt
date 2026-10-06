@@ -5,161 +5,117 @@ import java.lang.foreign.Arena
 import java.lang.foreign.FunctionDescriptor
 import java.lang.foreign.Linker
 import java.lang.foreign.MemorySegment
-import java.lang.foreign.SymbolLookup
-import java.lang.foreign.ValueLayout
 import java.lang.invoke.MethodHandle
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission
+import java.time.Instant
 
-/** Updates quarantine through Core Foundation's supported URL resource-property API. */
+/**
+ * Writes the `com.apple.quarantine` extended attribute directly, in the format browsers produce.
+ *
+ * Launch Services' quarantine API is not used because it behaves differently for ad-hoc signed
+ * processes such as a locally built native image: it drops the agent name and leaves a stub
+ * attribute behind on removal instead of deleting it.
+ */
 internal object MacOSQuarantine {
+    /** Quarantines [path] unless it already carries quarantine metadata, which is preserved. */
     fun apply(path: Path) {
-        update(path, enabled = true)
+        Arena.ofConfined().use { arena ->
+            val nativePath = arena.nativePath(path)
+            val name = arena.allocateFrom(QUARANTINE_ATTRIBUTE)
+            if (attributeSize(nativePath, name) < 0)
+                setAttribute(path, nativePath, name, arena.allocateFrom(newValue()))
+        }
     }
 
     fun remove(path: Path) {
-        update(path, enabled = false)
+        Arena.ofConfined().use { arena ->
+            val nativePath = arena.nativePath(path)
+            val name = arena.allocateFrom(QUARANTINE_ATTRIBUTE)
+            val result = withOwnerWrite(path) { REMOVEXATTR.invokeWithArguments(nativePath, name, XATTR_NOFOLLOW) as Int }
+            // Failure because the attribute is absent is success; anything else leaves it in place.
+            if (result != 0 && attributeSize(nativePath, name) >= 0)
+                throw IOException("Could not remove quarantine metadata from $path")
+        }
     }
 
-    private fun update(path: Path, enabled: Boolean) {
+    /** Quarantines [root] and everything beneath it with one shared attribute value, as Archive Utility does. */
+    fun applyTree(root: Path) {
         Arena.ofConfined().use { arena ->
-            val nativePath = arena.allocateFrom(path.toAbsolutePath().toString())
-            val fileURL = CF_URL_CREATE_FROM_FILE_SYSTEM_REPRESENTATION.invokeWithArguments(
-                MemorySegment.NULL, nativePath, nativePath.byteSize() - 1, 0.toByte()
-            ) as MemorySegment
-            check(fileURL != MemorySegment.NULL) { "Core Foundation could not create a file URL for $path" }
-
-            try {
-                val quarantined = hasQuarantineProperties(fileURL, arena)
-                if (enabled && !quarantined)
-                    setQuarantineProperties(fileURL, arena)
-                else if (!enabled && quarantined)
-                    removeQuarantineProperties(fileURL, arena)
-            } finally {
-                CF_RELEASE.invokeWithArguments(fileURL)
+            val name = arena.allocateFrom(QUARANTINE_ATTRIBUTE)
+            val value = arena.allocateFrom(newValue())
+            Files.walk(root).use { paths ->
+                for (path in paths) {
+                    if (!Files.isSymbolicLink(path))
+                        setAttribute(path, arena.nativePath(path), name, value)
+                }
             }
         }
     }
 
-    private fun hasQuarantineProperties(fileURL: MemorySegment, arena: Arena): Boolean {
-        val value = arena.allocate(ValueLayout.ADDRESS)
-        val error = arena.allocate(ValueLayout.ADDRESS)
-        val succeeded = (CF_URL_COPY_RESOURCE_PROPERTY.invokeWithArguments(
-            fileURL, quarantinePropertiesKey, value, error
-        ) as Byte).toInt() != 0
-        checkSucceeded(succeeded, error, "read quarantine properties")
+    /** Flags, hexadecimal download time, agent name and an (absent) quarantine event identifier. */
+    private fun newValue(): String = "%04x;%08x;%s;".format(QUARANTINE_FLAGS, Instant.now().epochSecond, AGENT_NAME)
 
-        val properties = value.get(ValueLayout.ADDRESS, 0)
-        if (properties == MemorySegment.NULL)
-            return false
-        CF_RELEASE.invokeWithArguments(properties)
-        return true
+    private fun attributeSize(nativePath: MemorySegment, name: MemorySegment): Long =
+        GETXATTR.invokeWithArguments(nativePath, name, MemorySegment.NULL, 0L, 0, XATTR_NOFOLLOW) as Long
+
+    private fun setAttribute(path: Path, nativePath: MemorySegment, name: MemorySegment, value: MemorySegment) {
+        // The value is written without its NUL terminator, matching other quarantine writers.
+        val result = withOwnerWrite(path) {
+            SETXATTR.invokeWithArguments(nativePath, name, value, value.byteSize() - 1, 0, XATTR_NOFOLLOW) as Int
+        }
+        if (result != 0)
+            throw IOException("Could not quarantine $path")
     }
 
-    private fun setQuarantineProperties(fileURL: MemorySegment, arena: Arena) {
-        val agentName = cfString("Hydraulic URL", arena)
-        val keys = arena.allocate(ValueLayout.ADDRESS, 2)
-        val values = arena.allocate(ValueLayout.ADDRESS, 2)
-        keys.setAtIndex(ValueLayout.ADDRESS, 0, quarantineAgentNameKey)
-        keys.setAtIndex(ValueLayout.ADDRESS, 1, quarantineTypeKey)
-        values.setAtIndex(ValueLayout.ADDRESS, 0, agentName)
-        values.setAtIndex(ValueLayout.ADDRESS, 1, quarantineTypeWebDownload)
-
-        val properties = CF_DICTIONARY_CREATE.invokeWithArguments(
-            MemorySegment.NULL, keys, values, 2L,
-            cfTypeDictionaryKeyCallbacks, cfTypeDictionaryValueCallbacks
-        ) as MemorySegment
-        if (properties == MemorySegment.NULL) {
-            CF_RELEASE.invokeWithArguments(agentName)
-            error("Core Foundation could not create quarantine properties")
-        }
-
+    /**
+     * Changing a file's extended attributes requires write permission, but archives often contain read-only files.
+     * If [operation] fails on such a file, retry it with owner write permission temporarily granted.
+     */
+    private fun withOwnerWrite(path: Path, operation: () -> Int): Int {
+        val result = operation()
+        if (result == 0 || Files.isSymbolicLink(path))
+            return result
+        val permissions = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS)
+        if (PosixFilePermission.OWNER_WRITE in permissions)
+            return result
+        Files.setPosixFilePermissions(path, permissions + PosixFilePermission.OWNER_WRITE)
         try {
-            val error = arena.allocate(ValueLayout.ADDRESS)
-            val succeeded = (CF_URL_SET_RESOURCE_PROPERTY.invokeWithArguments(
-                fileURL, quarantinePropertiesKey, properties, error
-            ) as Byte).toInt() != 0
-            checkSucceeded(succeeded, error, "set quarantine properties")
+            return operation()
         } finally {
-            CF_RELEASE.invokeWithArguments(properties)
-            CF_RELEASE.invokeWithArguments(agentName)
+            Files.setPosixFilePermissions(path, permissions)
         }
     }
 
-    private fun removeQuarantineProperties(fileURL: MemorySegment, arena: Arena) {
-        val error = arena.allocate(ValueLayout.ADDRESS)
-        val succeeded = (CF_URL_SET_RESOURCE_PROPERTY.invokeWithArguments(
-            fileURL, quarantinePropertiesKey, MemorySegment.NULL, error
-        ) as Byte).toInt() != 0
-        checkSucceeded(succeeded, error, "remove quarantine properties")
-    }
-
-    private fun cfString(value: String, arena: Arena): MemorySegment {
-        val result = CF_STRING_CREATE_WITH_C_STRING.invokeWithArguments(
-            MemorySegment.NULL, arena.allocateFrom(value), CF_STRING_ENCODING_UTF8
-        ) as MemorySegment
-        check(result != MemorySegment.NULL) { "Core Foundation could not create a string" }
-        return result
-    }
-
-    private fun checkSucceeded(succeeded: Boolean, errorOut: MemorySegment, operation: String) {
-        if (succeeded)
-            return
-        val error = errorOut.get(ValueLayout.ADDRESS, 0)
-        val code = if (error == MemorySegment.NULL) null else CF_ERROR_GET_CODE.invokeWithArguments(error) as Long
-        if (error != MemorySegment.NULL)
-            CF_RELEASE.invokeWithArguments(error)
-        throw IOException("Core Foundation failed to $operation${code?.let { " (error $it)" } ?: ""}")
-    }
+    private fun Arena.nativePath(path: Path): MemorySegment = allocateFrom(path.toAbsolutePath().toString())
 
     private fun function(name: String, descriptor: FunctionDescriptor): MethodHandle =
-        LINKER.downcallHandle(CORE_FOUNDATION.find(name).orElseThrow(), descriptor)
-
-    private fun globalPointer(lookup: SymbolLookup, name: String): MemorySegment =
-        lookup.find(name).orElseThrow().reinterpret(ValueLayout.ADDRESS.byteSize()).get(ValueLayout.ADDRESS, 0)
+        LINKER.downcallHandle(LINKER.defaultLookup().find(name).orElseThrow(), descriptor)
 
     private val LINKER = Linker.nativeLinker()
-    private val CORE_FOUNDATION = SymbolLookup.libraryLookup(CORE_FOUNDATION_PATH, Arena.global())
-    private val LAUNCH_SERVICES = SymbolLookup.libraryLookup(LAUNCH_SERVICES_PATH, Arena.global())
     private val C_POINTER = LINKER.canonicalLayouts().getValue("void*")
     private val C_LONG = LINKER.canonicalLayouts().getValue("long")
     private val C_INT = LINKER.canonicalLayouts().getValue("int")
-    private val C_CHAR = LINKER.canonicalLayouts().getValue("char")
 
-    private val CF_URL_CREATE_FROM_FILE_SYSTEM_REPRESENTATION = function(
-        "CFURLCreateFromFileSystemRepresentation",
-        FunctionDescriptor.of(C_POINTER, C_POINTER, C_POINTER, C_LONG, C_CHAR)
+    private val GETXATTR = function(
+        "getxattr",
+        FunctionDescriptor.of(C_LONG, C_POINTER, C_POINTER, C_POINTER, C_LONG, C_INT, C_INT)
     )
-    private val CF_URL_COPY_RESOURCE_PROPERTY = function(
-        "CFURLCopyResourcePropertyForKey",
-        FunctionDescriptor.of(C_CHAR, C_POINTER, C_POINTER, C_POINTER, C_POINTER)
+    private val SETXATTR = function(
+        "setxattr",
+        FunctionDescriptor.of(C_INT, C_POINTER, C_POINTER, C_POINTER, C_LONG, C_INT, C_INT)
     )
-    private val CF_URL_SET_RESOURCE_PROPERTY = function(
-        "CFURLSetResourcePropertyForKey",
-        FunctionDescriptor.of(C_CHAR, C_POINTER, C_POINTER, C_POINTER, C_POINTER)
+    private val REMOVEXATTR = function(
+        "removexattr",
+        FunctionDescriptor.of(C_INT, C_POINTER, C_POINTER, C_INT)
     )
-    private val CF_STRING_CREATE_WITH_C_STRING = function(
-        "CFStringCreateWithCString",
-        FunctionDescriptor.of(C_POINTER, C_POINTER, C_POINTER, C_INT)
-    )
-    private val CF_DICTIONARY_CREATE = function(
-        "CFDictionaryCreate",
-        FunctionDescriptor.of(C_POINTER, C_POINTER, C_POINTER, C_POINTER, C_LONG, C_POINTER, C_POINTER)
-    )
-    private val CF_ERROR_GET_CODE = function(
-        "CFErrorGetCode",
-        FunctionDescriptor.of(C_LONG, C_POINTER)
-    )
-    private val CF_RELEASE = function("CFRelease", FunctionDescriptor.ofVoid(C_POINTER))
-
-    private val quarantinePropertiesKey = globalPointer(CORE_FOUNDATION, "kCFURLQuarantinePropertiesKey")
-    private val quarantineAgentNameKey = globalPointer(LAUNCH_SERVICES, "kLSQuarantineAgentNameKey")
-    private val quarantineTypeKey = globalPointer(LAUNCH_SERVICES, "kLSQuarantineTypeKey")
-    private val quarantineTypeWebDownload = globalPointer(LAUNCH_SERVICES, "kLSQuarantineTypeWebDownload")
-    private val cfTypeDictionaryKeyCallbacks = CORE_FOUNDATION.find("kCFTypeDictionaryKeyCallBacks").orElseThrow()
-    private val cfTypeDictionaryValueCallbacks = CORE_FOUNDATION.find("kCFTypeDictionaryValueCallBacks").orElseThrow()
 }
 
-private const val CORE_FOUNDATION_PATH = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
-private const val LAUNCH_SERVICES_PATH =
-    "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/LaunchServices"
-private const val CF_STRING_ENCODING_UTF8 = 0x08000100
+private const val QUARANTINE_ATTRIBUTE = "com.apple.quarantine"
+// Escaped as Launch Services writes it, since the attribute's fields are delimited by semicolons.
+private const val AGENT_NAME = "Hydraulic\\x20URL"
+// The flags Launch Services records for a web download.
+private const val QUARANTINE_FLAGS = 0x0081
+private const val XATTR_NOFOLLOW = 0x0001

@@ -46,7 +46,7 @@ class Run(
     @Option(names = ["-r", "--refresh"], description = ["Ignore any cached HTTP response and download the resource again."])
     var refresh: Boolean = false
 
-    @Option(names = ["--no-gatekeeper"], description = ["Remove macOS Gatekeeper quarantine metadata from Mach-O results."])
+    @Option(names = ["--no-gatekeeper"], description = ["Do not quarantine downloaded and extracted files for macOS Gatekeeper, and remove quarantine from cached files."])
     var noGatekeeper: Boolean = false
 
     @Option(

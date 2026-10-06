@@ -32,14 +32,16 @@ internal fun parseArchiveURL(uri: URI, depth: Int = 0): ArchiveURL? {
     return ArchiveURL(archiveURI, member)
 }
 
-internal fun extractedArchiveCacheKey(archive: Path, contentHash: String? = null): String = """
+internal fun extractedArchiveCacheKey(archive: Path, quarantined: Boolean, contentHash: String? = null): String = """
     Extracted archive
-    Layout version: 3
+    Layout version: 4
     File name: ${archive.name}
     SHA-256: ${contentHash ?: archive.fingerprint()}
+    Quarantined: $quarantined
 """.trimIndent()
 
-internal fun streamedArchiveCacheKey(uri: URI): String = "Streamed extracted archive\nLayout version: 3\nURI: $uri"
+internal fun streamedArchiveCacheKey(uri: URI, quarantined: Boolean): String =
+    "Streamed extracted archive\nLayout version: 4\nURI: $uri\nQuarantined: $quarantined"
 
 private fun URI.isRemoteTarball(): Boolean = ARCHIVE_SUFFIXES.filterNot { it == ".zip" }
     .any { path.endsWith(it, ignoreCase = true) }

@@ -69,7 +69,7 @@ class URL(
     @Option(names = ["--print-separator"], paramLabel = "CHAR", description = ["Terminate each returned path with this character."])
     var printSeparator: String? = null
 
-    @Option(names = ["--no-gatekeeper"], description = ["Remove macOS Gatekeeper quarantine metadata from Mach-O results."])
+    @Option(names = ["--no-gatekeeper"], description = ["Do not quarantine downloaded and extracted files for macOS Gatekeeper, and remove quarantine from cached files."])
     var noGatekeeper: Boolean = false
 
     @Option(

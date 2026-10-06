@@ -17,28 +17,16 @@
         "parameterTypes": ["int"]
       },
       {
-        "returnType": "void*",
-        "parameterTypes": ["void*", "void*", "long", "char"]
-      },
-      {
-        "returnType": "char",
-        "parameterTypes": ["void*", "void*", "void*", "void*"]
-      },
-      {
-        "returnType": "void*",
-        "parameterTypes": ["void*", "void*", "int"]
-      },
-      {
-        "returnType": "void*",
-        "parameterTypes": ["void*", "void*", "void*", "long", "void*", "void*"]
-      },
-      {
         "returnType": "long",
-        "parameterTypes": ["void*"]
+        "parameterTypes": ["void*", "void*", "void*", "long", "int", "int"]
       },
       {
-        "returnType": "void",
-        "parameterTypes": ["void*"]
+        "returnType": "int",
+        "parameterTypes": ["void*", "void*", "void*", "long", "int", "int"]
+      },
+      {
+        "returnType": "int",
+        "parameterTypes": ["void*", "void*", "int"]
       }
     ]
   },

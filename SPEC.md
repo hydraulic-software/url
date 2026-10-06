@@ -62,6 +62,8 @@ must use HTTP or HTTPS.
 - `-r`, `--refresh`: ignore a cached HTTP response and fetch the resource
   again. The refreshed response replaces the cache entry used by later
   resolutions.
+- `--no-gatekeeper`: on macOS, do not quarantine results, as described below.
+  It has no effect on other systems.
 - `-V`, `--version`: print the build's version and exit successfully.
 - `--progress=json`: emit machine-readable progress as newline-delimited JSON
   objects on standard error. Each progress object must have `"type":
@@ -90,6 +92,15 @@ hashbang (`#!`) or an ELF, Mach-O, or fat Mach-O magic value must gain the
 owner, group, and other execute bits. All existing permission bits must be
 preserved. Other content and non-regular-file results must not gain execute
 permission from this rule.
+
+On macOS, the command must quarantine results as a web browser does, so that
+Gatekeeper assesses them before they run. Every downloaded file result and
+every file and directory created by archive extraction carries a
+`com.apple.quarantine` attribute. Extracted entries share one attribute value,
+as Archive Utility produces. Existing quarantine metadata on a cached file is
+preserved. With `--no-gatekeeper`, results must carry no quarantine metadata;
+the command removes it from cached files, and an archive extracted under one
+setting must not be reused under the other. Symbolic links are not marked.
 
 A hashbang text file may override the origin's HTTP cache policy with a second
 line of the form `# Cache-Control: DIRECTIVES` or `// Cache-Control:
