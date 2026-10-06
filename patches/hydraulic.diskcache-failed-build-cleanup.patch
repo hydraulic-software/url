@@ -1,0 +1,140 @@
+diff --git a/modules/hydraulic.diskcache/src/main/kotlin/hydraulic/diskcache/LocalDiskCache.kt b/modules/hydraulic.diskcache/src/main/kotlin/hydraulic/diskcache/LocalDiskCache.kt
+index f1ce220e7..6d4965b0c 100644
+--- a/modules/hydraulic.diskcache/src/main/kotlin/hydraulic/diskcache/LocalDiskCache.kt
++++ b/modules/hydraulic.diskcache/src/main/kotlin/hydraulic/diskcache/LocalDiskCache.kt
+@@ -77,6 +77,7 @@ class LocalDiskCache @JvmOverloads constructor(directory: Path, configuration: C
+         it.minFreeDiskSpace = configuration.minFreeDiskSpace
+         it.skipCacheLock = configuration.skipCacheLock
+         it.directoryLockFileName = configuration.directoryLockFileName
++        it.discardFailedBuilds = configuration.discardFailedBuilds
+     }
+ 
+     /**
+@@ -138,6 +139,13 @@ class LocalDiskCache @JvmOverloads constructor(directory: Path, configuration: C
+         /** Name of the persistent file whose OS lock coordinates access to the cache directory. */
+         var directoryLockFileName = "LOCKED"
+ 
++        /**
++         * Selects ordinary build failures whose partial working directory should be deleted immediately.
++         * The default preserves failed builds for investigation. Interrupted builds are always discarded.
++         * The callback receives the original exception; cleanup failures are added to it as suppressed exceptions.
++         */
++        var discardFailedBuilds: (Exception) -> Boolean = { false }
++
+         // If you add anything here, ensure it's being copied in the block at the top of this file.
+     }
+ 
+@@ -1184,16 +1192,25 @@ class LocalDiskCache @JvmOverloads constructor(directory: Path, configuration: C
+                 }
+             }
+         } catch (e: Exception) {
+-            if (e is InterruptedException || e is ClosedByInterruptException) {
+-                trashDirs(listOf(workingDir), andClear = true)
+-                log.debug("Cache build for $hashedKey was interrupted.")
+-            } else {
+-                log.debug(
+-                    "Cache build operation for $hashedKey ended exceptionally: ${
+-                        e.stackTraceToString().splitToLineSequence().first()
+-                    }"
+-                )
++            val interrupted = e is InterruptedException || e is ClosedByInterruptException
++            val discard = try {
++                interrupted || configuration.discardFailedBuilds(e)
++            } catch (policyFailure: Exception) {
++                e.addSuppressed(policyFailure)
++                false
+             }
++            if (discard) {
++                try {
++                    trashDirs(listOf(workingDir), andClear = true)
++                } catch (cleanupFailure: Exception) {
++                    e.addSuppressed(cleanupFailure)
++                }
++            }
++            log.debug(
++                "Cache build operation for $hashedKey ended exceptionally " +
++                    "(${if (discard) "discarding" else "preserving"} working directory): " +
++                    e.stackTraceToString().splitToLineSequence().first()
++            )
+             return e
+         }
+ 
+diff --git a/modules/hydraulic.diskcache/src/test/kotlin/hydraulic/diskcache/LocalDiskCacheTest.kt b/modules/hydraulic.diskcache/src/test/kotlin/hydraulic/diskcache/LocalDiskCacheTest.kt
+index 5038dd27b..d2e7fb6bc 100644
+--- a/modules/hydraulic.diskcache/src/test/kotlin/hydraulic/diskcache/LocalDiskCacheTest.kt
++++ b/modules/hydraulic.diskcache/src/test/kotlin/hydraulic/diskcache/LocalDiskCacheTest.kt
+@@ -52,7 +52,8 @@ abstract class LocalDiskCacheTest {
+         minFreeDiskSpace: Long = 1_000_000_000,
+         numBlocks: Int? = null,
+         memFs: FileSystem = createMemFS(fsBlockSize, numBlocks),
+-        directoryLockFileName: String = "LOCKED"
++        directoryLockFileName: String = "LOCKED",
++        discardFailedBuilds: (Exception) -> Boolean = { false }
+     ): LocalDiskCache {
+         val root = memFs.rootDirectories.first()
+         val cacheDir = (root / "hydraulic/factory/cache").createDirectories()
+@@ -60,6 +61,7 @@ abstract class LocalDiskCacheTest {
+             it.minFreeDiskSpace = minFreeDiskSpace
+             it.maxSize = cacheMaxSize
+             it.directoryLockFileName = directoryLockFileName
++            it.discardFailedBuilds = discardFailedBuilds
+         }
+         return LocalDiskCache(cacheDir, config).also {
+             it.clock = TestClock(tickSize = Duration.ofSeconds(5))
+@@ -159,6 +161,56 @@ abstract class LocalDiskCacheTest {
+ 
+     class DummyException : Exception()
+ 
++    @Test
++    fun `failed build cleanup is selective and preserves the original exception`() {
++        makeCache(discardFailedBuilds = { it is IllegalStateException }).use { cache ->
++            val retained = DummyException()
++            assertSame(retained, assertThrows<DummyException> {
++                cache.get("retained") { destination ->
++                    (destination / "partial").writeText("diagnostic data")
++                    throw retained
++                }
++            })
++            val discarded = IllegalStateException("no disk space")
++            assertSame(discarded, assertThrows<IllegalStateException> {
++                cache.get("discarded") { destination ->
++                    (destination / "partial").writeText("partial data")
++                    throw discarded
++                }
++            })
++            assertNull(cache.lookup("retained"))
++            assertNull(cache.lookup("discarded"))
++            val remaining = cache.layout.working.listDirectoryEntries().single()
++            assertEquals("diagnostic data", (remaining / "content" / "partial").readText())
++            assertFalse(cache.layout.trash.exists())
++        }
++    }
++
++    @Test
++    fun `interrupted builds are discarded even when failure policy preserves builds`() {
++        makeCache(discardFailedBuilds = { false }).use { cache ->
++            assertThrows<InterruptedException> {
++                cache.get("interrupted") { destination ->
++                    (destination / "partial").writeText("partial data")
++                    throw InterruptedException()
++                }
++            }
++            assertTrue(!cache.layout.working.exists() || cache.layout.working.listDirectoryEntries().isEmpty())
++            assertNull(cache.lookup("interrupted"))
++        }
++    }
++
++    @Test
++    fun `failure policy exceptions do not replace the build exception`() {
++        val policyFailure = IllegalArgumentException("policy failed")
++        makeCache(discardFailedBuilds = { throw policyFailure }).use { cache ->
++            val original = DummyException()
++            assertSame(original, assertThrows<DummyException> { cache.get("failed") { throw original } })
++            assertTrue(original.suppressed.contains(policyFailure))
++            assertEquals(1, cache.layout.working.listDirectoryEntries().size)
++        }
++    }
++
+     @Test
+     fun `not in the cache during build`() {
+         makeCache().use { cache ->

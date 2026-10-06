@@ -6,7 +6,6 @@ import io.airlift.compress.v3.zstd.ZstdOutputStream
 import hydraulic.diskcache.LocalDiskCache
 import hydraulic.diskcache.http.HttpResourceCache
 import hydraulic.diskcache.http.HttpTransport
-import hydraulic.archives.extractLocalArchive
 import hydraulic.utils.os.OperatingSystemPaths
 import org.apache.commons.compress.archivers.zip.UnixStat
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
@@ -353,7 +352,7 @@ class URLResolverTest {
         val archive = tempDir / "tool.zip"
         archive.writeBytes("contents".toByteArray())
         assertTrue(extractedArchiveCacheKey(archive).matches(
-            Regex("Extracted archive\\nLayout version: 2\\nFile name: tool\\.zip\\nSHA-256: [a-z0-9]+")
+            Regex("Extracted archive\\nLayout version: 3\\nFile name: tool\\.zip\\nSHA-256: [a-z0-9]+")
         ))
     }
 
@@ -1016,7 +1015,7 @@ class URLResolverTest {
         archive.writeBytes(zipOf("../escaped" to "bad"))
 
         assertFailsWith<IllegalArgumentException> {
-            extractLocalArchive(archive, (tempDir / "extracted").createDirectories())
+            extractSafeLocalArchive(archive, (tempDir / "extracted").createDirectories())
         }
 
         assertFalse((tempDir / "escaped").toFile().exists())
@@ -1046,7 +1045,7 @@ class URLResolverTest {
         archive.writeBytes(unixZipOf("root/bin/java", "../lib/jvm", UnixStat.LINK_FLAG or 0b111_101_101))
         val destination = (tempDir / "extracted").createDirectories()
 
-        extractLocalArchive(archive, destination)
+        extractSafeLocalArchive(archive, destination)
 
         val link = destination / "root/bin/java"
         assertTrue(link.isSymbolicLink())
@@ -1776,7 +1775,7 @@ class URLResolverTest {
         archive.writeBytes(unixZipOf("root/bin/tool", "contents", UnixStat.FILE_FLAG or 0b111_101_101))
         val destination = (tempDir / "extracted").createDirectories()
 
-        extractLocalArchive(archive, destination)
+        extractSafeLocalArchive(archive, destination)
 
         assertEquals("contents", (destination / "root/bin/tool").readText())
         assertTrue(Files.isExecutable(destination / "root/bin/tool"))
@@ -1831,7 +1830,7 @@ class URLResolverTest {
         val destination = tempDir / "local"
 
         assertFailsWith<IllegalArgumentException> {
-            extractLocalArchive(archive, destination)
+            extractSafeLocalArchive(archive, destination)
         }
         assertFalse(Files.exists(tempDir / "payload", java.nio.file.LinkOption.NOFOLLOW_LINKS))
     }

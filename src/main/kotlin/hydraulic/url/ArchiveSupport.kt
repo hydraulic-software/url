@@ -34,12 +34,12 @@ internal fun parseArchiveURL(uri: URI, depth: Int = 0): ArchiveURL? {
 
 internal fun extractedArchiveCacheKey(archive: Path, contentHash: String? = null): String = """
     Extracted archive
-    Layout version: 2
+    Layout version: 3
     File name: ${archive.name}
     SHA-256: ${contentHash ?: archive.fingerprint()}
 """.trimIndent()
 
-internal fun streamedArchiveCacheKey(uri: URI): String = "Streamed extracted archive\nLayout version: 2\nURI: $uri"
+internal fun streamedArchiveCacheKey(uri: URI): String = "Streamed extracted archive\nLayout version: 3\nURI: $uri"
 
 private fun URI.isRemoteTarball(): Boolean = ARCHIVE_SUFFIXES.filterNot { it == ".zip" }
     .any { path.endsWith(it, ignoreCase = true) }

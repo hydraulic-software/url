@@ -108,11 +108,13 @@ class URL(
         val minimumFreeSpace = downloadPolicy.minimumFreeSpaceBytes(environment)
         val cacheConfiguration = downloadPolicy.cacheConfiguration()
         try {
+            preparePrivateCacheDirectory(cacheDirectory)
             LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
                 val transport = MinimumFreeSpaceHttpTransport(
                     UserAgentHttpTransport(),
-                    minimumFreeSpace
-                ) { Files.getFileStore(cacheDirectory).usableSpace }
+                    minimumFreeSpace,
+                    usableSpace = { Files.getFileStore(cacheDirectory).usableSpace }
+                )
                 val parallelProgress = ParallelURLProgress(inputs.map(URLInput::url), progressTracker)
                 val paths = parallelMapOrdered(inputs) { index, input ->
                     val uri = parseURL(input.url)
@@ -122,7 +124,8 @@ class URL(
                             parallelProgress.tracker(index),
                             gatekeeper = !noGatekeeper,
                             refresh = refresh,
-                            transport = transport
+                            transport = transport,
+                            minimumFreeSpaceBytes = minimumFreeSpace
                         )
                             .resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri)
                             .use { it.path.toAbsolutePath() }

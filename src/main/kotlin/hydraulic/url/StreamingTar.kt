@@ -1,6 +1,8 @@
 package hydraulic.url
 
 import io.airlift.compress.v3.zstd.ZstdInputStream
+import org.apache.commons.compress.archivers.zip.ZipFile
+import org.apache.commons.compress.archivers.tar.TarConstants
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.CompressorException
@@ -12,14 +14,17 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFileAttributeView
 import kotlin.io.path.createDirectories
 import kotlin.io.path.isSymbolicLink
 
 /** Extracts a tar stream without materializing the compressed archive on disk. */
-internal fun extractStreamingTar(input: InputStream, destination: Path) {
-    destination.createDirectories()
+internal fun extractStreamingTar(input: InputStream, destination: Path, minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_MB * 1_000_000,
+    usableSpace: () -> Long = { Files.getFileStore(destination).usableSpace }) {
+    preparePrivateCacheDirectory(destination)
     val root = destination.toRealPath()
     val state = StreamingExtractionState(root)
+    val space = DiskSpaceGuard(minimumFreeSpaceBytes, usableSpace)
     val source = BufferedInputStream(input)
     source.mark(1024 * 1024)
     val signature = source.readNBytes(4)
@@ -38,7 +43,56 @@ internal fun extractStreamingTar(input: InputStream, destination: Path) {
         while (true) {
             val entry = tar.nextEntry ?: break
             require(tar.canReadEntryData(entry)) { "Unable to read archive entry ${entry.name}" }
-            extractTarEntry(tar, entry, state)
+            extractTarEntry(tar, entry, state, space)
+        }
+    }
+    state.createSymlinks()
+}
+
+/** ZIP extraction uses the central directory; TAR uses the same bounded streaming implementation. */
+internal fun extractSafeLocalArchive(archive: Path, destination: Path, minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_MB * 1_000_000,
+    usableSpace: () -> Long = { Files.getFileStore(destination).usableSpace }) {
+    val signature = Files.newInputStream(archive).use { it.readNBytes(4) }
+    if (signature.size < 2 || signature[0] != 'P'.code.toByte() || signature[1] != 'K'.code.toByte()) {
+        Files.newInputStream(archive).use { extractStreamingTar(it, destination, minimumFreeSpaceBytes, usableSpace) }
+        return
+    }
+    preparePrivateCacheDirectory(destination)
+    val root = destination.toRealPath()
+    val state = StreamingExtractionState(root)
+    val space = DiskSpaceGuard(minimumFreeSpaceBytes, usableSpace)
+    ZipFile.builder().setPath(archive).get().use { zip ->
+        val entries = zip.entries
+        while (entries.hasMoreElements()) {
+            val entry = entries.nextElement()
+            require(zip.canReadEntryData(entry)) { "Unable to read archive entry ${entry.name}" }
+            val type = entry.unixMode and 0xF000
+            require(type == 0 || type == 0x8000 || type == 0x4000 || type == 0xA000) {
+                "Archive entry has an unsupported special type: ${entry.name}"
+            }
+            // TarArchiveEntry constructors can normalize absolute names; validate the original ZIP spelling first.
+            val relative = Path.of(entry.name.removePrefix("./"))
+            require(relative.root == null && relative.normalize() == relative) {
+                "Archive entry has an unsafe path: ${entry.name}"
+            }
+            val tarEntry = TarArchiveEntry(entry.name, when {
+                entry.isUnixSymlink -> TarConstants.LF_SYMLINK
+                entry.isDirectory -> TarConstants.LF_DIR
+                else -> TarConstants.LF_NORMAL
+            }).apply {
+                size = if (entry.isDirectory || entry.isUnixSymlink) 0 else entry.size
+                mode = if (entry.unixMode == 0) 0b110_100_100 else entry.unixMode
+            }
+            zip.getInputStream(entry).use { input ->
+                if (entry.isUnixSymlink) {
+                    // Link payloads are untrusted too; never allocate according to their declared size.
+                    require(entry.size in 1..4096) { "Archive symlink target is too long: ${entry.name}" }
+                    val target = input.readNBytes(4097)
+                    require(target.size <= 4096) { "Archive symlink target is too long: ${entry.name}" }
+                    tarEntry.linkName = target.toString(Charsets.UTF_8)
+                }
+                extractTarEntry(input, tarEntry, state, space)
+            }
         }
     }
     state.createSymlinks()
@@ -46,7 +100,8 @@ internal fun extractStreamingTar(input: InputStream, destination: Path) {
 
 private val ZSTD_MAGIC = byteArrayOf(0x28, 0xb5.toByte(), 0x2f, 0xfd.toByte())
 
-private fun extractTarEntry(input: InputStream, entry: TarArchiveEntry, state: StreamingExtractionState) {
+private fun extractTarEntry(input: InputStream, entry: TarArchiveEntry, state: StreamingExtractionState, space: DiskSpaceGuard) {
+    space.check()
     val root = state.root
     // Tar commonly emits a directory entry named "./" when archiving the
     // contents of a directory (for example, `tar -cf ../archive.tar .`).
@@ -88,7 +143,7 @@ private fun extractTarEntry(input: InputStream, entry: TarArchiveEntry, state: S
         StandardOpenOption.TRUNCATE_EXISTING,
         StandardOpenOption.WRITE,
         LinkOption.NOFOLLOW_LINKS
-    ).use(input::copyTo)
+    ).use { output -> space.copy(input, output) }
     applyTarMode(target, entry.mode)
 }
 
@@ -209,11 +264,10 @@ private fun applyTarMode(path: Path, mode: Int) {
         0b010_000_000 to PosixFilePermission.OWNER_WRITE,
         0b001_000_000 to PosixFilePermission.OWNER_EXECUTE,
         0b000_100_000 to PosixFilePermission.GROUP_READ,
-        0b000_010_000 to PosixFilePermission.GROUP_WRITE,
         0b000_001_000 to PosixFilePermission.GROUP_EXECUTE,
         0b000_000_100 to PosixFilePermission.OTHERS_READ,
-        0b000_000_010 to PosixFilePermission.OTHERS_WRITE,
         0b000_000_001 to PosixFilePermission.OTHERS_EXECUTE
     )
-    runCatching { Files.setPosixFilePermissions(path, flags.filter { mode and it.first != 0 }.map { it.second }.toSet()) }
+    if (Files.getFileAttributeView(path, PosixFileAttributeView::class.java) != null)
+        Files.setPosixFilePermissions(path, flags.filter { mode and it.first != 0 }.map { it.second }.toSet())
 }

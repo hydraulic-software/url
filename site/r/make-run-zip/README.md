@@ -19,7 +19,8 @@ The builder's `context.d.ts` exclusion is only a convenience. If another
 builder includes that file, verification includes it in the timestamped
 manifest like any other package file.
 The manifest sorts UTF-8 relative paths and records each file as
-`<sha256>  <path>`. The
+`<sha256>  <path>`. File path components may not contain literal backslashes
+or newlines; the Unix builder rejects them before requesting a timestamp. The
 default timestamp authority is DigiCert; a third argument can select another
 RFC 3161 HTTP endpoint:
 

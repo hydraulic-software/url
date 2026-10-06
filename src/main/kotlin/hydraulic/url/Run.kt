@@ -81,12 +81,14 @@ class Run(
         val minimumFreeSpace = downloadPolicy.minimumFreeSpaceBytes(environment)
         val cacheConfiguration = downloadPolicy.cacheConfiguration()
         try {
+            preparePrivateCacheDirectory(cacheDirectory)
             LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
                 val transport = MinimumFreeSpaceHttpTransport(
                     UserAgentHttpTransport(),
-                    minimumFreeSpace
-                ) { Files.getFileStore(cacheDirectory).usableSpace }
-                val resolver = URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh, transport = transport)
+                    minimumFreeSpace,
+                    usableSpace = { Files.getFileStore(cacheDirectory).usableSpace }
+                )
+                val resolver = URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh, transport = transport, minimumFreeSpaceBytes = minimumFreeSpace)
                 val packageResource = if (localPackage == null)
                     resolver.resolve(runTargetURI(parseURL(target.locator)))
                 else

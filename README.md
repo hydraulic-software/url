@@ -20,8 +20,21 @@ $ https://example.com --version
 
 They're like curl, but simpler when you don't want to manage the downloaded files. Useful with substitutions!
 `url` cleans up the cache when it grows too large, and refuses new downloads
-when less than 100 MB is free. Override the threshold with
+when less than 100 MB is free, and checks space throughout downloads and
+extraction. Override the threshold with
 `--min-free-space=MB` or `URL_MIN_FREE_SPACE_MB`; use `0` to disable the guard.
+
+Downloads and archive extraction check the destination's available space as
+work proceeds, including cache copies during revalidation. There is no fixed
+limit on response size, expanded archive size, or archive entry count. Disk-space
+refusals clean up their partial files immediately. Other failed builds retain
+their working files for investigation. Existing cache hits remain usable
+without downloading or extracting again.
+
+On POSIX systems, cache directories are made private (mode `0700`), and
+extracted files cannot be group- or world-writable. A POSIX cache directory
+must be a real directory rather than a symbolic link.
+
 The `https://` part is optional:
 
 ```
@@ -73,6 +86,11 @@ tar forms are uncompressed `.tar`, gzip (`.tar.gz`), bzip2 (`.tar.bz2`), XZ
 (`.tar.Z`); ZIP is also supported but requires a seekable cached file.
 Extraction stays in-process, consistently across Linux, macOS, and Windows,
 without depending on locally installed tools.
+
+Timestamped run packages reject file path components containing literal
+backslashes or newlines. Paths in the authenticated manifest are constructed
+from filesystem components joined with `/`, so Unix filenames cannot alias
+nested paths. The Unix package builder rejects these filenames as well.
 
 ## Proxies
 

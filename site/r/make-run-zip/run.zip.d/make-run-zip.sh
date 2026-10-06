@@ -75,15 +75,18 @@ if ! find "$source" -type f -exec sh -c '
   newline=$(printf "\nX")
   newline=${newline%X}
   carriage=$(printf "\r")
+  source=$1
+  shift
   for file do
-    case "$file" in
-      *"$newline"*|*"$carriage"*)
+    relative=${file#"$source/"}
+    case "$relative" in
+      *"$newline"*|*"$carriage"*|*\\*)
         exit 1
         ;;
     esac
   done
-' sh {} +; then
-  echo "Source file names may not contain newlines" >&2
+' sh "$source" {} +; then
+  echo "Source file names may not contain newlines or backslashes" >&2
   exit 2
 fi
 if find "$source" -name timestamp.tsr -print -quit | grep -q .; then

@@ -110,7 +110,20 @@ A trailing slash after an archive name selects its extracted root.
 
 Extraction must reject traversal, including writes redirected outside the
 extracted root by archive-created or pre-existing symbolic links. It must not
-return a member whose resolved path escapes the extracted root. 
+return a member whose resolved path escapes the extracted root.
+
+On POSIX systems, extracted regular files must not retain group or other
+write permissions from the archive; their read and execute bits may be
+preserved.
+
+The `--min-free-space=MB` guard (default 100 MB, overridable by
+`URL_MIN_FREE_SPACE_MB`) must check the destination's available space while
+consuming responses, writing extracted files, and copying cache content;
+zero disables this guard. A failed operation must not publish its partial
+cache entry. Disk-space refusals must clean up partial files where possible;
+other failed builds may retain working files for investigation. Response size,
+expanded archive size, and archive entry count have no fixed limits.
+
 The exact extraction-cache path is not part of this specification.
 
 ### SHA-256 locks
@@ -141,3 +154,11 @@ already printed for earlier inputs are not rolled back. Exit statuses are:
   archive, hash, cache, or local I/O failure.
 
 Exact diagnostic wording is not normative.
+
+## Timestamped run packages
+
+When verifying a run package timestamp, manifest paths must be constructed
+from filesystem path components joined with `/`. Components containing
+literal backslashes, carriage returns, or newlines must be rejected, so a
+Unix filename cannot authenticate as a different nested path. These rules
+also apply to the supplied Unix package builder.

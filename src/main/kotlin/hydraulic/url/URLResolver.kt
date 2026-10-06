@@ -6,7 +6,6 @@ import hydraulic.diskcache.http.HttpResourceCache
 import hydraulic.diskcache.http.HttpStatusException
 import hydraulic.diskcache.http.HttpTransport
 import hydraulic.diskcache.http.JdkHttpTransport
-import hydraulic.archives.extractLocalArchive
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -16,6 +15,9 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermission
 import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.util.HexFormat
@@ -37,15 +39,17 @@ class URLResolver private constructor(
     private val gatekeeper: Boolean = true,
     private val transport: HttpTransport = UserAgentHttpTransport(),
     private val refresh: Boolean,
-    private val retryDamagedCacheEntry: Boolean
+    private val retryDamagedCacheEntry: Boolean,
+    private val minimumFreeSpaceBytes: Long
 ) {
     constructor(
         cache: DiskCache,
         progressTracker: ProgressReport.Tracker? = null,
         gatekeeper: Boolean = true,
         transport: HttpTransport = UserAgentHttpTransport(),
-        refresh: Boolean = false
-    ) : this(cache, progressTracker, gatekeeper, transport, refresh, retryDamagedCacheEntry = true)
+        refresh: Boolean = false,
+        minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_MB * 1_000_000
+    ) : this(cache, progressTracker, gatekeeper, transport, refresh, retryDamagedCacheEntry = true, minimumFreeSpaceBytes = minimumFreeSpaceBytes)
 
     // A non-HTTP aware cache that maps strings to unique directories, tracking their sizes and deleting them
     // when they get too large.
@@ -56,21 +60,34 @@ class URLResolver private constructor(
     // If there's a cache hit but in reality it's gone, it's considered a miss.
     // TODO: This check should move into DiskCache itself.
     private val completeCache = CompleteEntryDiskCache(cache)
-    // Implements HTTP caching semantics on top of the DiskCache.
-    private val resources = HttpResourceCache(
-        // DiskCache entries come with metadata that tracks the HTTP response headers.
-        // If we're forcing a refresh we can strip the metadata as we won't need it.
-        if (refresh) MetadataFreeLookupCache(this.completeCache) else this.completeCache,
-        transport = transport,
-        progressTracker = progressTracker
-    )
-    // When a URL has a #sha256=... fragment it means it's "hash locked" and thus there's no point
-    // ever re-validating a cache entry, as it's not allowed to change. Strip the metadata.
-    private val hashLockedResources = HttpResourceCache(
-        MetadataFreeLookupCache(this.completeCache),
-        transport = transport,
-        progressTracker = progressTracker
-    )
+    private fun resolveHttpResource(uri: URI, cacheIdentity: URI, hashLocked: Boolean = false): DiskCache.OpenedEntry {
+        val guardedTransport = HttpTransport { request, headers ->
+            val response = transport.get(request, headers)
+            try {
+                // The HTTP cache library copies an old body on 304. Reserve room for the complete
+                // known-size copy before allowing it, since that copy does not read the HTTP body.
+                if (response.statusCode == 304 && minimumFreeSpaceBytes > 0) {
+                    completeCache.lookup(HttpResourceCache.cacheKey(cacheIdentity))?.use { previous ->
+                        val bytes = Files.walk(previous.directory).use { paths ->
+                            paths.filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }
+                                .mapToLong { Files.size(it) }.sum()
+                        }
+                        checkFreeSpace(minimumFreeSpaceBytes,
+                            Files.getFileStore(previous.directory).usableSpace, bytes)
+                    }
+                }
+                response
+            } catch (failure: Exception) {
+                response.body.close()
+                throw failure
+            }
+        }
+        return HttpResourceCache(
+            if (refresh || hashLocked) MetadataFreeLookupCache(completeCache) else completeCache,
+            transport = guardedTransport,
+            progressTracker = progressTracker
+        ).resolve(uri, cacheIdentity)
+    }
 
     fun resolve(uri: URI, cacheIdentity: URI = uri): ResolvedURL {
         // TODO: Move handling of damage into DiskCache.
@@ -87,7 +104,8 @@ class URLResolver private constructor(
                 gatekeeper,
                 transport,
                 refresh = false,
-                retryDamagedCacheEntry = false
+                retryDamagedCacheEntry = false,
+                minimumFreeSpaceBytes = minimumFreeSpaceBytes
             ).resolve(uri, cacheIdentity)
         }
     }
@@ -165,7 +183,7 @@ class URLResolver private constructor(
             // Otherwise it's not in our disk cache yet. Go fetch!
             //
             // A hash-locked miss must fetch a new body without conditional headers; the lock is the validator for this request.
-            (if (expectedHash == null) resources else hashLockedResources).resolve(uri, cacheIdentity)
+            resolveHttpResource(uri, cacheIdentity, hashLocked = expectedHash != null)
         }
         val file = entry.singleFile()
         var metadata = entry.metadata
@@ -245,7 +263,7 @@ class URLResolver private constructor(
                     resolveStreamedArchive(archive, identityArchive, expectedArchiveHash),
                     expectedArchiveHash
                 )
-            val downloaded: ResolvedURL = resources.resolve(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
+            val downloaded: ResolvedURL = resolveHttpResource(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
             downloaded.use { downloaded ->
                 return Resolution(resolveExtractedArchive(archive, downloaded.path))
             }
@@ -277,7 +295,7 @@ class URLResolver private constructor(
             extractedArchiveCacheKey(archiveFile, verifiedArchiveHash),
             rerun = false
         ) { destination ->
-            extractLocalArchive(archiveFile, destination)
+            extractSafeLocalArchive(archiveFile, destination, minimumFreeSpaceBytes)
             DiskCache.EntryComputationResult()
         }
         return selectArchiveMember(archive, extracted)
@@ -321,7 +339,7 @@ class URLResolver private constructor(
                         checkNotNull(previousDirectory) { "Received HTTP 304 without cached extraction for ${archive.archiveURI}" }
                         copyDirectory(previousDirectory, destination)
                     }
-                    in 200..299 -> extractStreamingTar(archiveBody, destination)
+                    in 200..299 -> extractStreamingTar(archiveBody, destination, minimumFreeSpaceBytes)
                     else -> throw HttpStatusException(archive.archiveURI, response.statusCode)
                 }
                 // If there's junk left over at the end of the tarball, make sure that gets hashed too.
@@ -347,13 +365,29 @@ class URLResolver private constructor(
     }
 
     private fun copyDirectory(source: Path, destination: Path) {
+        preparePrivateCacheDirectory(destination)
+        val space = DiskSpaceGuard(minimumFreeSpaceBytes, destination)
         Files.walk(source).use { paths ->
             for (path in paths) {
                 val target = destination.resolve(source.relativize(path))
-                if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS))
+                val regular = Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                space.check()
+                if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
                     Files.createDirectories(target)
-                else
+                } else if (regular) {
+                    Files.newInputStream(path).use { input ->
+                        Files.newOutputStream(target, StandardOpenOption.CREATE,
+                            StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE,
+                            LinkOption.NOFOLLOW_LINKS).use { output -> space.copy(input, output) }
+                    }
+                    if (Files.getFileAttributeView(path, PosixFileAttributeView::class.java) != null)
+                        Files.setPosixFilePermissions(target, Files.getPosixFilePermissions(path) - setOf(
+                            PosixFilePermission.GROUP_WRITE,
+                            PosixFilePermission.OTHERS_WRITE
+                        ))
+                } else {
                     Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES, LinkOption.NOFOLLOW_LINKS)
+                }
             }
         }
     }

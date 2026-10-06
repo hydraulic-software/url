@@ -71,7 +71,9 @@ internal fun canonicalRunManifest(packageDir: Path): ByteArray {
     }
 
     val records = files.map { path ->
-        val relative = root.relativize(path).toString().replace('\\', '/')
+        val components = root.relativize(path).map { it.toString() }
+        require(components.none { '\\' in it }) { "Run package paths may not contain backslashes: $path" }
+        val relative = components.joinToString("/")
         require('\n' !in relative && '\r' !in relative) {
             "Run package paths may not contain newlines: $relative"
         }
