@@ -133,8 +133,9 @@ not be sent in the HTTP request. If resolution returns an ordinary HTTP
 resource, the command must hash that final file even when its path looks like
 an archive member. If resolution extracts an archive, it must hash the complete
 innermost archive before extraction. For example, a lock on
-`outer.zip/inner.zip/file` authenticates `inner.zip`. A lock selecting a
-directory must fail. Other URI fragments have no locking meaning.
+`outer.zip/inner.zip/file` authenticates `inner.zip`. The same applies when
+the result is a directory: a lock on `app.zip/` or `app.zip/dir/` authenticates
+`app.zip`. Other URI fragments have no locking meaning.
 
 ## Output, diagnostics, and failure
 

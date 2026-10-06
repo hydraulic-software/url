@@ -421,19 +421,45 @@ class URLResolverTest {
     }
 
     @Test
-    fun `hash locks reject archive directory results`() = withServer { server ->
+    fun `hash locks on archive directory results authenticate the archive`() = withServer { server ->
         val zip = zipOf("tool-1.0/bin/tool" to "archive member")
+        val tarball = tarGzOf("tool-1.0/bin/tool" to "streamed member")
+        val innerZip = zipOf("inner/file.txt" to "nested member")
+        val outerZip = zipOfBytes("inner.zip" to innerZip)
         server.createContext("/") {
-            if (it.requestURI.path == "/tool.zip") it.respond(zip) else it.respond404()
+            when (it.requestURI.path) {
+                "/tool.zip" -> it.respond(zip)
+                "/tool.tar.gz" -> it.respond(tarball)
+                "/outer.zip" -> it.respond(outerZip)
+                else -> it.respond404()
+            }
         }
-        val lock = zip.sha256()
+        val wrong = "0".repeat(64)
 
         makeCache().use { cache ->
-            assertFailsWith<IllegalArgumentException> {
-                URLResolver(cache).resolve(server.uri("/tool.zip/#sha256=$lock"))
+            // Repeat each lookup so cache hits are checked as well as fresh extractions.
+            repeat(2) {
+                URLResolver(cache).resolve(server.uri("/tool.zip/#sha256=${zip.sha256()}")).use {
+                    assertEquals("archive member", (it.path / "tool-1.0/bin/tool").readText())
+                }
+                URLResolver(cache).resolve(server.uri("/tool.zip/tool-1.0/bin/#sha256=${zip.sha256()}")).use {
+                    assertEquals("archive member", (it.path / "tool").readText())
+                }
+                URLResolver(cache).resolve(server.uri("/tool.tar.gz/#sha256=${tarball.sha256()}")).use {
+                    assertEquals("streamed member", (it.path / "tool-1.0/bin/tool").readText())
+                }
+                URLResolver(cache).resolve(server.uri("/outer.zip/inner.zip/inner/#sha256=${innerZip.sha256()}")).use {
+                    assertEquals("nested member", (it.path / "file.txt").readText())
+                }
             }
+            for (path in listOf("/tool.zip/", "/tool.zip/tool-1.0/bin/", "/tool.tar.gz/", "/outer.zip/inner.zip/inner/")) {
+                assertFailsWith<IllegalArgumentException>(path) {
+                    URLResolver(cache).resolve(server.uri("$path#sha256=$wrong"))
+                }
+            }
+            // The outer archive's hash does not authenticate a nested archive.
             assertFailsWith<IllegalArgumentException> {
-                URLResolver(cache).resolve(server.uri("/tool.zip/tool-1.0/bin/#sha256=$lock"))
+                URLResolver(cache).resolve(server.uri("/outer.zip/inner.zip/inner/#sha256=${outerZip.sha256()}"))
             }
         }
     }

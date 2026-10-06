@@ -127,13 +127,13 @@ class URLResolver private constructor(
         try {
             if (!resolved.path.exists())
                 throwDamagedCacheEntry(resolved, "resolved content disappeared")
-            if (expectedSha256Hash != null) {
-                require(resolved.path.isRegularFile()) { "SHA-256 locking requires a file result" }
-                if (resolution.verifiedSha256 != expectedSha256Hash) {
-                    val actualHash = resolved.path.sha256()
-                    require(actualHash.equals(expectedSha256Hash, ignoreCase = true)) {
-                        "SHA-256 mismatch: expected $expectedSha256Hash but resolved $actualHash"
-                    }
+            // Directory results come only from extracted archives, whose bytes
+            // were verified against the lock before extraction.
+            if (expectedSha256Hash != null && resolution.verifiedSha256 != expectedSha256Hash) {
+                require(resolved.path.isRegularFile()) { "SHA-256 locking requires a file or archive result" }
+                val actualHash = resolved.path.sha256()
+                require(actualHash.equals(expectedSha256Hash, ignoreCase = true)) {
+                    "SHA-256 mismatch: expected $expectedSha256Hash but resolved $actualHash"
                 }
             }
             resolved.path.makeExecutableIfRecognized()
