@@ -99,7 +99,9 @@ export default {
 
 `from` and `to` are required non-empty strings. `from` must exactly match a
 path returned by `urls` or an earlier `compose` call during this evaluation.
-Arbitrary local paths, including package files, are not composition sources.
+If the same path was returned for more than one source identity, as defined
+under composition cache identity, using it as `from` is an error. Arbitrary
+local paths, including package files, are not composition sources.
 `select` is an optional non-empty string defaulting to `"."`; it selects an
 exact file or directory tree relative to `from`. There are no glob patterns.
 When `from` is a file, only `select: "."` is allowed. `replace` is an optional
@@ -116,12 +118,15 @@ replace earlier objects at the same destination, recursively removing an
 earlier directory if necessary. Directories merge with existing directories;
 an earlier file or symbolic link at a directory's destination is removed
 before the directory is created. Missing parent directories are created.
-An existing regular file in a destination's ancestor path is an error.
+An existing regular file in a destination's ancestor path is an error rather
+than being replaced, because a recipe that writes beneath a file is likely to
+be mistaken.
 
 With `replace: true`, the destination subtree is removed before copying the
 selection. At `to: "."`, this clears the assembled root's contents. Directory
 merging retains earlier files absent from the later selection; subtree
-replacement removes them. Neither operation modifies the source.
+replacement removes them. For a file or symbolic-link selection, `replace`
+has no additional effect. Neither operation modifies the source.
 
 ### Removal operations
 
@@ -147,28 +152,54 @@ const app = compose([
 `select`, `to`, and `remove` use portable `/`-separated relative paths.
 Redundant separators and `.` components are normalized; `"."` denotes the
 root. Absolute paths, drive prefixes, backslashes, and `..` components are
-invalid. Source selections must remain within their leased cache entry both
-lexically and when resolving symbolic links.
+invalid.
+
+Symbolic links in intermediate components of a `select` path are followed,
+and each resolved component must remain within the source's leased cache
+entry. The final selected component is not followed: selecting a symbolic
+link copies the link itself. Links inside a selected directory tree are
+likewise copied as links.
 
 Copy and removal operations must not traverse symbolic links in destination
 ancestor paths. Such an ancestor is an error, even when the link points
-within the assembly. Operations may replace or remove a link at the exact
-destination. Removal through a non-directory ancestor is a no-op because the
+within the assembly, because whether the path exists would otherwise depend
+on the link's target. Operations may replace or remove a link at the exact
+destination. Removal through a regular-file ancestor is a no-op because the
 selected path does not exist.
+
+Two destination paths name the same entry only when they are byte-identical
+after the normalization above. The result must not depend on the host
+filesystem's case sensitivity or Unicode normalization: an operation fails if it would place an entry beside an
+existing sibling whose name differs but is equal under Unicode default case
+folding and NFC normalization. This includes such collisions within one
+selected tree.
 
 Relative source symbolic links are preserved verbatim. After all operations,
 every surviving link must resolve to an existing object inside the assembled
 root. Absolute, escaping, dangling, and cyclic links are errors. Validation
 occurs after overlays and removals, so a later operation may supply a link's
-target or remove a link that would otherwise be invalid.
+target or remove a link that would otherwise be invalid. If the host cannot
+create a symbolic link, for example on Windows without the required
+privilege, composition fails.
 
-Regular files are independent copies. Filesystem copy-on-write cloning is
-permitted, but hard links sharing writable file content with sources are not.
-Copies preserve regular-file attributes supported by the filesystem,
-including executable permissions on POSIX systems, and retain the host's
-Gatekeeper policy. Created directories use the host's normal directory
-permissions. Publication is atomic: a failed composition must not publish a
-partial cache entry.
+Regular files are independent copies. Implementations should use filesystem
+copy-on-write cloning where available. Hard links sharing writable file
+content with sources are not permitted. Copies preserve regular-file
+attributes supported by the filesystem, including executable permissions on
+POSIX systems. Source directory permissions are not copied; created
+directories use the host's normal directory permissions.
+
+On macOS, an assembly receives the same Gatekeeper quarantine treatment as an
+extracted archive under the host's current setting: by default every file and
+directory in it is quarantined, and with Gatekeeper disabled none is.
+Quarantine metadata on source files is not copied. This setting is part of the
+materialization policy.
+
+Composition entries are ordinary cache entries, subject to the same eviction,
+free-space guard, and damaged-entry handling as resolver entries. Publication
+is atomic: a failed composition must not publish a partial cache entry.
+Concurrent evaluations building the same composition must both succeed, with
+each one using a completed entry.
 
 ### Composition cache identity
 
@@ -180,24 +211,30 @@ must not be part of the identity.
 
 A hash-locked source is identified by its normalized effective URL, including
 the `#sha256=` lock and archive-member selection. Existing URL resolution and
-hash-lock rules still apply; composition does not make otherwise invalid
-hash-locked directory requests valid. An unlocked source is identified by
+hash-lock rules apply, so a lock on an archive root or directory member, such
+as `app.zip/#sha256=…`, authenticates the innermost archive and makes the
+whole selected tree a locked source. An unlocked source is identified by
 its normalized effective URL and a persistent content revision. The effective
 URL includes any Windows `.exe` resolution fallback.
 
 A content revision changes whenever a new response body is accepted,
 including during refresh. Fresh cache hits and `304 Not Modified` preserve
 the revision, even when response metadata is updated. Evicted or damaged
-entries reconstructed from a new response must not accidentally reuse an
-obsolete revision. An HTTP response timestamp or filesystem modification time
-alone is insufficient unless it provides these guarantees.
+entries reconstructed from a new response must not reuse a revision that
+identified different content. An HTTP response timestamp, entity tag, or
+filesystem modification time alone is insufficient unless it provides these
+guarantees. A SHA-256 digest of the accepted response body satisfies them and
+can be computed while the body is received; an entry rebuilt from an
+identical body then keeps its revision, so dependent compositions stay valid.
 
 Extracted selections inherit the revision of the resource supplying their
 content, including nested archive selections. A source returned by `compose`
 contributes that composition's cache identity instead of a URL. Keys include
 copy selections, destinations, replacement flags, removal paths, operation
-order, and materialization policy. Equivalent normalized paths and omitted
-default values have the same identity.
+order, and materialization policy. The materialization policy covers every
+host setting that changes the assembled files, such as the Gatekeeper
+setting. Equivalent normalized paths and omitted default values have the same
+identity.
 
 Changing an unlocked source revision invalidates dependent compositions even
 when the selected subtree is unchanged. Computing the composition key does
