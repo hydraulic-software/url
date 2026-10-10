@@ -35,13 +35,14 @@ class RunTest : URLTestSupport() {
         val packageFile = directory / "run.js"
         packageFile.writeText("""
             if (!Object.isFrozen(context) || !Object.isFrozen(context.args)) throw Error("mutable context");
-            export default { executable: "tool", arguments: [context.ver, ...context.args] };
+            export default { executable: "tool", arguments: [context.cwd, context.ver, ...context.args] };
         """.trimIndent())
         val values = listOf("quote\" and backslash\\", "\b\u000C\n\r\t\u0000\u001F", "\u2028\u2029", "emoji \uD83D\uDE00")
         val plan = evaluateRunJavaScript(packageFile, RunContext("linux", "arm64", values[0], values, directory)) {
             error("unused")
         }
-        assertEquals(listOf(values[0]) + values, plan.arguments)
+        assertTrue(Path.of(plan.arguments.first()).isAbsolute)
+        assertEquals(listOf(values[0]) + values, plan.arguments.drop(1))
     }
 
     @Test

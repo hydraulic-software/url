@@ -70,6 +70,7 @@ class Run(
                     arch = architecture,
                     ver = target.version,
                     args = arguments,
+                    cwd = Path.of("").toAbsolutePath(),
                     packageDir = packagePath.toRealPath().parent ?: error("run.js must have a parent directory")
                 )
                 verifyRunPackage(context.packageDir)

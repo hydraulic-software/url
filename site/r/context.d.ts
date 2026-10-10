@@ -7,6 +7,7 @@ declare const context: Readonly<{
     ver: string | null;
     args: readonly string[];
     packageDir: string;
+    cwd: string;
 }>;
 
 type UrlInput = string | readonly string[];

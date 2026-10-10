@@ -13,7 +13,7 @@ named `run.zip.d` and pass that directory to `run`.
 
 A package contains a small JavaScript launch description. The host provides an
 immutable `context` object with `os`, `arch`, nullable `ver`, `args`, and
-`packageDir` properties.
+`packageDir` and absolute working directory `cwd` properties.
 
 The host provides three asynchronous functions. Each returns a promise and
 starts its work immediately, so operations run concurrently with each other and

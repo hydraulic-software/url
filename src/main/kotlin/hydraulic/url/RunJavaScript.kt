@@ -27,7 +27,8 @@ internal data class RunContext(
     val arch: String,
     val ver: String?,
     val args: List<String>,
-    val packageDir: Path
+    val packageDir: Path,
+    val cwd: Path = Path.of("").toAbsolutePath()
 )
 
 internal data class LaunchPlan(val executable: Path, val arguments: List<String>)
@@ -437,6 +438,7 @@ private fun Value.stringArray(error: (Long) -> String): List<String> = (0 until 
 
 private fun contextJavaScript(context: RunContext): String {
     val json = JsonObject(mapOf(
+        "cwd" to JsonPrimitive(context.cwd.toString()),
         "os" to JsonPrimitive(context.os),
         "arch" to JsonPrimitive(context.arch),
         "ver" to JsonPrimitive(context.ver),

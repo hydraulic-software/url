@@ -155,7 +155,7 @@ The black-box compliance checks can be run against a native executable with
 `RUN_BIN=./build/native/nativeCompile/run python3 scripts/run-compliance.py`.
 
 The package accesses `context.os`, `context.arch`, nullable `context.ver`,
-`context.args`, and `context.packageDir`. The host functions are asynchronous
+`context.args`, `context.packageDir`, and the absolute working directory `context.cwd`. The host functions are asynchronous
 and return promises, so a package uses top-level `await`. `url()` resolves one
 URL to a path. `urls()` takes an array of URLs or a map whose values are URLs or
 arrays of URLs, resolves all entries concurrently and returns paths in the
