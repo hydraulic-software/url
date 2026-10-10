@@ -30,7 +30,7 @@ export default {
 };
 ```
 
-The package must export its launch plan as the default export. The exported value must be an object with a non-empty string `executable` property and an `arguments` array containing only strings. The host starts the resulting process directly and passes the arguments unchanged.
+The package must export its launch plan as the default export. The exported value must be an object with a non-empty string `executable` property and an `arguments` array containing only strings. It may also have a `permissions` object, described under [Permissions](#permissions). The host starts the resulting process directly in the current working directory and passes the arguments unchanged.
 
 The package may import other JavaScript modules with relative paths, for example `import { select } from "./platform.js"`. Imports are resolved from the package directory and may only read files within that package. Node.js builtins and non-local module sources are unavailable. Modules may use top-level `await`.
 
@@ -43,6 +43,7 @@ The implementation supplies one immutable `context` object:
 * `context.ver`: the non-empty version suffix without the `@`, or `null` when none was given.
 * `context.args`: arguments passed after the locator.
 * `context.packageDir`: the absolute path to the directory containing `run.js`.
+* `context.cwd`: the absolute path of the working directory `run` was started in.
 
 The host supplies the asynchronous `url`, `urls`, and `compose` functions. They
 may be called any number of times. Each returns a promise and starts its work
@@ -300,7 +301,155 @@ A bare `executable` name is resolved using the host's normal command search path
 
 On Windows, a non-bare `executable` path may omit its final `.exe` suffix, as executable URLs may. If no file exists at the path but one exists with `.exe` appended, the host launches that file. Packages can therefore build executable paths, such as `${home}/bin/java`, the same way on every platform.
 
-The host keeps resolved source and composition cache entries open until the child process exits, and releases them if evaluation or launch fails. This allows future implementations to expose exactly those paths to a process sandbox.
+The host keeps resolved source and composition cache entries open until the child process exits, and releases them if evaluation or launch fails. Those entries are the ones a sandboxed process may read, as described under [Permissions](#permissions).
+
+## Permissions
+
+A launch plan may declare what the process needs with a `permissions` object.
+A plan without one runs unrestricted, with all of the user's privileges. A
+plan with one, even an empty one, entitles the process only to the
+permissions it lists and to the baseline below.
+
+Because the plan is computed when the package is evaluated, its permissions
+can depend on the arguments, the working directory, the platform, and the
+version. A package for a compiler might grant writes only to the output its
+user names:
+
+```js
+const args = context.args;
+const o = args.indexOf("-o");
+const output = o >= 0 && o + 1 < args.length ? args[o + 1] : "build";
+
+export default {
+  executable: await url(`https://example.com/cc-${context.os}-${context.arch}.tar.gz/bin/cc`),
+  arguments: args,
+  permissions: {
+    "std.files.read": [context.cwd],
+    "std.files.write": [output],
+    "std.environment": ["CC_*"],
+  },
+};
+```
+
+Permission names are namespaced keys. Keys beginning with `std.` are reserved
+for this specification. Other keys may be defined by implementations or by
+convention, preferably under a reverse-DNS prefix such as `com.example.gpu`.
+This specification defines:
+
+* `std.files.read`: an array of paths that may be read, recursively for
+  directories.
+* `std.files.write`: an array of paths that may be created, modified, renamed,
+  and deleted, recursively for directories. Write permission includes read
+  permission for the same paths.
+* `std.network.client`: a boolean allowing outgoing network connections,
+  including name lookups.
+* `std.network.server`: a boolean allowing the process to accept incoming
+  network connections.
+* `std.environment`: an array of environment variable names passed to the
+  process in addition to the baseline variables. In a name, `*` matches any
+  sequence of characters, including none. Names are compared
+  case-insensitively on Windows and case-sensitively elsewhere.
+* `std.semantics`: a semantics revision, described below.
+
+`false` and empty arrays grant nothing. A `permissions` value that is not an
+object, a value of the wrong type for a key defined by this specification,
+or an empty or non-string array element makes the plan invalid, and `run`
+fails without launching a process. Later revisions of this specification
+do not change the type of an existing key, so this check cannot reject a
+package written against a later revision. Keys the host does not recognize
+are not granted, and the host does not warn about them.
+
+Relative paths are resolved against `context.cwd`; `~` is not expanded.
+Symbolic links in the existing part of a path are resolved when the process
+is launched, and the permission applies to the resolved location. A write
+permission for a path that does not exist yet allows the process to create
+it as a file or directory. A host that cannot grant permission for a path
+that does not exist may grant it for the nearest existing ancestor instead,
+and a dry run shows the wider grant.
+
+A process with a `permissions` object may always:
+
+* read and execute files in the package directory and in every cache entry
+  resolved or composed during evaluation, including whole archive
+  extractions that a returned path points inside;
+* read and execute the system libraries, frameworks, configuration, and
+  programs needed to start ordinary programs, as defined by the host;
+* use its standard input, output, error, and controlling terminal;
+* read and write a private temporary directory, named by `TMPDIR` on POSIX
+  systems and `TEMP` and `TMP` on Windows, which the host may delete when the
+  process exits;
+* receive `PATH`, `HOME`, `TERM`, `LANG`, and `LC_*` from the environment of
+  `run`, together with the variables matched by `std.environment`. Other
+  variables are not passed.
+
+Child processes inherit the restrictions of their parent.
+
+Permissions are enforced on a best-effort basis. How they are enforced is up
+to the implementation and depends on the platform. A host may be unable to
+enforce some or all of them, for example on an older operating system, and
+then runs the process with weaker restrictions or none, without warning. A
+host may refuse to launch a program it cannot confine to the declared
+permissions, for example a program whose own platform declarations would
+give it broader access.
+
+### Semantics revisions
+
+Package authors and implementers do not necessarily coordinate, so the rules
+above must be able to change without breaking existing packages. A later
+version of this specification may, for example, remove an ambient
+permission from the baseline that should not have been granted. Each set of
+rules for standard keys and the baseline is a semantics revision, named by
+the date in `YYYY-MM-DD` form from which it applies. This specification
+defines revision `2026-10-10`, which is the earliest.
+
+A package's revision is chosen using the date of its verified
+[timestamp](#timestamped-packages), or for a package without a timestamp, such
+as a local directory being developed, the current date. A package can opt in
+to a revision before its date by naming it in `std.semantics`; when that is
+later than the timestamp date, it is used instead. A package cannot choose an
+earlier revision than its timestamp date selects, so republishing a package
+moves it to the rules in force at the time.
+
+The host applies the latest revision it implements whose date is on or
+before the chosen date, or the earliest revision it implements if there is
+none. A host therefore treats a package written for a revision it does not
+know as best it can, using the rules it has. A `std.semantics` value that is
+not a valid date makes the plan invalid. A dry run shows the revision the
+host applied.
+
+## Dry runs
+
+`run --dry` or `run -d`, followed by a run target and its arguments,
+evaluates the package as a normal run would, including resolving and
+caching its URLs, and then prints the launch plan to stdout instead of
+starting the process. Like other `run` options, the flag must come before
+the target; after the target, it is an argument for the package. A dry run
+exits with status 0 when the plan is valid. An invalid plan fails as it
+would in a normal run.
+
+The output is meant for people and its format is not specified. It includes
+the executable, the arguments, and whether the process would run
+unrestricted or sandboxed. For a sandboxed process it lists the semantics
+revision, each declared permission with its resolved paths, any grants the
+host widened, the baseline grants, and any keys the host does not recognize.
+For example:
+
+```
+$ run -d example.com/cc -o out/app main.c
+Executable:  /Users/alice/Library/Caches/url/…/bin/cc
+Arguments:   -o out/app main.c
+Sandbox:     2026-10-10 rules
+Permissions:
+  std.files.read   /Users/alice/src/app
+  std.files.write  /Users/alice/src/app/out/app
+                   (widened to /Users/alice/src/app/out)
+  std.environment  CC_* (matches CC_FLAGS)
+  network          none
+Baseline:
+  read, execute    package directory and 1 cache entry
+  read, write      private temporary directory
+  environment      PATH HOME TERM LANG
+```
 
 ## Timestamped packages
 
@@ -331,4 +480,4 @@ A non-empty `@VERSION` suffix on the locator, before any query or fragment, is r
 
 ## Security
 
-JavaScript is a general-purpose language. A conforming implementation must configure its engine so the package receives only the context, `url`, `urls`, and `compose` capabilities described above. Composition grants access only to paths returned during the current evaluation and does not permit arbitrary filesystem reads or writes. Resource exhaustion limits and stronger process isolation depend on the host platform and JavaScript engine; implementations should apply them where available. GraalVM users should consult its [sandboxing documentation](https://www.graalvm.org/latest/security-guide/sandboxing/) when evaluating packages that are not trusted.
+JavaScript is a general-purpose language. A conforming implementation must configure its engine so the package receives only the context, `url`, `urls`, and `compose` capabilities described above. Composition grants access only to paths returned during the current evaluation and does not permit arbitrary filesystem reads or writes. Resource exhaustion limits and stronger isolation of the JavaScript evaluation depend on the host platform and JavaScript engine; implementations should apply them where available. Permissions confine the launched process, not the evaluation, and are declared by the package itself: they show what a program will be able to do and limit what it can do if it misbehaves later, but they do not make an untrusted package trustworthy. Users should inspect a dry run before running a package they do not trust. GraalVM users should consult its [sandboxing documentation](https://www.graalvm.org/latest/security-guide/sandboxing/) when evaluating packages that are not trusted.
