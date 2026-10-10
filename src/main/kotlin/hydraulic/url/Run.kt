@@ -27,7 +27,8 @@ class Run(
     private val windows: Boolean = Platform.isWindows,
     private val environment: Map<String, String> = System.getenv(),
     private val operatingSystem: String = Platform.os,
-    private val architecture: String = runArchitecture()
+    private val architecture: String = runArchitecture(),
+    private val clock: java.time.Clock = java.time.Clock.systemUTC()
 ) : Callable<Int> {
     @Parameters(index = "0", arity = "0..1", paramLabel = "URL_OR_DIRECTORY")
     var url: String? = null
@@ -58,6 +59,7 @@ class Run(
         return resolverOptions.withResolver { cache, resolver, _ ->
             val minimumFreeSpace = resolverOptions.downloadPolicy.minimumFreeSpaceBytes(environment)
             val opened = ConcurrentLinkedQueue<ResolvedURL>()
+            var temporaryDirectory: Path? = null
             try {
                 val packageResource = if (localPackage == null)
                     resolver.resolve(runTargetURI(parseURL(target.locator)))
@@ -73,7 +75,7 @@ class Run(
                     cwd = Path.of("").toAbsolutePath(),
                     packageDir = packagePath.toRealPath().parent ?: error("run.js must have a parent directory")
                 )
-                verifyRunPackage(context.packageDir)
+                val timestamp = verifyRunPackage(context.packageDir)
                 val sources = ComposeSources()
                 val composer = Composer(cache, quarantinesResults(!resolverOptions.noGatekeeper), minimumFreeSpace, windows)
                 val compose = { operations: List<ComposeOperation> ->
@@ -89,9 +91,20 @@ class Run(
                     sources.add(path, ComposeSource(sourceIdentity(effectiveURI, resolved), path, resolved.entryDirectory))
                     path
                 }
-                runResolvedPath(launchExecutable(plan.executable, windows), plan.arguments, environment)
+                val grant = plan.permissions?.let { requested ->
+                    val revision = selectRevision(timestamp, requested.semantics, java.time.LocalDate.now(clock))
+                    val temporary = Files.createTempDirectory("hydraulic-run-").toRealPath()
+                    temporaryDirectory = temporary
+                    buildSandboxGrant(requested, revision, context, opened.map { it.entryDirectory },
+                        temporary, environment, windows)
+                }
+                runResolvedPath(launchExecutable(plan.executable, windows), plan.arguments, grant?.environment ?: environment)
             } finally {
-                opened.forEach(ResolvedURL::close)
+                try {
+                    temporaryDirectory?.let(::deleteSandboxTemporaryDirectory)
+                } finally {
+                    opened.forEach(ResolvedURL::close)
+                }
             }
         }
     }

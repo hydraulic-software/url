@@ -38,6 +38,52 @@ class RunTest : URLTestSupport() {
     }
 
     @Test
+    fun `effective grants resolve paths and retain whole cache entries`() {
+        val cwd = (tempDir / "cwd").createDirectories()
+        val packageDir = (tempDir / "package").createDirectories()
+        val cache = (tempDir / "cache").createDirectories()
+        val temporary = (tempDir / "private-tmp").createDirectories()
+        (cwd / "input").writeText("read")
+        val requested = RequestedPermissions(read = listOf("input"), write = listOf("out/new"),
+            environment = listOf("CC_*"))
+        val grant = buildSandboxGrant(requested, SEMANTICS_REVISIONS.first(),
+            RunContext("linux", "arm64", null, emptyList(), packageDir, cwd), listOf(cache), temporary,
+            mapOf("PATH" to "bin", "HOME" to "home", "LC_ALL" to "C", "CC_FLAGS" to "-O", "SECRET" to "hidden"), false)
+        assertEquals((cwd / "input").toRealPath(), grant.read.single().path)
+        assertEquals(cwd.toRealPath() / "out/new", grant.write.single().path)
+        assertTrue(grant.write.single().missing)
+        assertEquals(listOf(packageDir.toRealPath(), cache.toRealPath()), grant.baselineRead)
+        assertEquals(setOf("PATH", "HOME", "LC_ALL", "CC_FLAGS", "TMPDIR"), grant.environment.keys)
+        assertEquals(listOf("CC_FLAGS"), grant.environmentMatches["CC_*"])
+        assertEquals(temporary.toString(), grant.environment["TMPDIR"])
+    }
+
+    @Test
+    fun `permission paths resolve symlink prefixes before dot dot`() {
+        assumeFalse(Platform.isWindows)
+        val target = (tempDir / "target" / "nested").createDirectories()
+        Files.createSymbolicLink(tempDir / "link", target)
+        assertEquals(target.toRealPath() / "missing/file", permissionPath(tempDir / "link/missing/file"))
+        assertEquals(target.parent.toRealPath() / "missing", permissionPath(tempDir / "link/../missing"))
+    }
+
+    @Test
+    fun `environment filtering implements literal names star globs and Windows casing`() {
+        val environment = mapOf("Path" to "bin", "HOME" to "home", "CC_FLAGS" to "flags", "SECRET" to "value")
+        assertSame(environment, sandboxEnvironment(environment, null, false))
+        assertEquals(setOf("HOME"), sandboxEnvironment(environment, RequestedPermissions(), false).keys)
+        assertEquals(setOf("Path", "HOME", "CC_FLAGS"),
+            sandboxEnvironment(environment, RequestedPermissions(environment = listOf("cc_*")), true).keys)
+        assertTrue(environmentMatches("A*B*C", "ABmiddleC", false))
+        assertFalse(environmentMatches("A.B", "AxB", false))
+        assertFalse(environmentMatches("CC_*", "cc_flags", false))
+        val temporary = (tempDir / "private").createDirectories()
+        (temporary / "file").writeText("cleanup")
+        deleteSandboxTemporaryDirectory(temporary)
+        assertFalse(Files.exists(temporary))
+    }
+
+    @Test
     fun `semantics selection uses UTC timestamps and only allows forward opt ins`() {
         val early = SemanticsRevision(java.time.LocalDate.parse("2020-01-01"))
         val later = SemanticsRevision(java.time.LocalDate.parse("2022-01-01"))

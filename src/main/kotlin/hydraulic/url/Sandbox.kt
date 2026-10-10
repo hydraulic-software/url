@@ -32,3 +32,70 @@ internal fun selectRevision(
     val selectedDate = maxOf(packageDate, declared ?: packageDate)
     return revisions.filter { it.date <= selectedDate }.maxByOrNull { it.date } ?: revisions.minBy { it.date }
 }
+
+internal data class GrantedPath(val requested: String, val path: java.nio.file.Path, val missing: Boolean)
+
+internal data class SandboxGrant(
+    val requested: RequestedPermissions,
+    val revision: SemanticsRevision,
+    val read: List<GrantedPath>,
+    val write: List<GrantedPath>,
+    val baselineRead: List<java.nio.file.Path>,
+    val temporaryDirectory: java.nio.file.Path,
+    val environment: Map<String, String>,
+    val environmentMatches: Map<String, List<String>>
+)
+
+/** Resolve links before normalizing .., including links in the existing prefix of a missing path. */
+internal fun permissionPath(path: java.nio.file.Path): java.nio.file.Path {
+    val absolute = path.toAbsolutePath()
+    if (java.nio.file.Files.exists(absolute, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return absolute.toRealPath()
+    return permissionPath(requireNotNull(absolute.parent)).resolve(absolute.fileName).normalize()
+}
+
+internal fun environmentMatches(pattern: String, name: String, windows: Boolean): Boolean {
+    val expression = pattern.split('*').joinToString(".*") { Regex.escape(it) }
+    return Regex(expression, if (windows) setOf(RegexOption.IGNORE_CASE) else emptySet()).matches(name)
+}
+
+internal fun sandboxEnvironment(
+    environment: Map<String, String>,
+    requested: RequestedPermissions?,
+    windows: Boolean
+): Map<String, String> {
+    if (requested == null) return environment
+    val patterns = listOf("PATH", "HOME", "TERM", "LANG", "LC_*") + requested.environment
+    return environment.filterKeys { name -> patterns.any { environmentMatches(it, name, windows) } }
+}
+
+internal fun buildSandboxGrant(
+    requested: RequestedPermissions,
+    revision: SemanticsRevision,
+    context: RunContext,
+    cacheEntries: List<java.nio.file.Path>,
+    temporaryDirectory: java.nio.file.Path,
+    environment: Map<String, String>,
+    windows: Boolean
+): SandboxGrant {
+    // Each future semantics revision can provide its own grant builder here.
+    require(revision in SEMANTICS_REVISIONS) { "Unsupported semantics revision: ${revision.date}" }
+    fun paths(values: List<String>) = values.map { value ->
+        val path = permissionPath(context.cwd.resolve(value))
+        GrantedPath(value, path, !java.nio.file.Files.exists(path))
+    }
+    val filtered = sandboxEnvironment(environment, requested, windows).toMutableMap()
+    val tempNames = if (windows) listOf("TEMP", "TMP") else listOf("TMPDIR")
+    filtered.keys.removeAll { key -> tempNames.any { key.equals(it, ignoreCase = windows) } }
+    tempNames.forEach { filtered[it] = temporaryDirectory.toString() }
+    return SandboxGrant(requested, revision, paths(requested.read), paths(requested.write),
+        (listOf(context.packageDir) + cacheEntries).map(::permissionPath).distinct(), temporaryDirectory,
+        filtered, requested.environment.associateWith { pattern ->
+            environment.keys.filter { environmentMatches(pattern, it, windows) }.sorted()
+        })
+}
+
+internal fun deleteSandboxTemporaryDirectory(directory: java.nio.file.Path) {
+    java.nio.file.Files.walk(directory).use { paths ->
+        paths.sorted(Comparator.reverseOrder()).forEach(java.nio.file.Files::deleteIfExists)
+    }
+}
