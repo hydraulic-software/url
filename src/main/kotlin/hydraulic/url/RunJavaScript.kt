@@ -31,7 +31,7 @@ internal data class RunContext(
     val cwd: Path = Path.of("").toAbsolutePath()
 )
 
-internal data class LaunchPlan(val executable: Path, val arguments: List<String>)
+internal data class LaunchPlan(val executable: Path, val arguments: List<String>, val permissions: RequestedPermissions? = null)
 
 private data class UrlRequest(val name: String?, val url: String)
 
@@ -427,10 +427,10 @@ private fun launchPlan(value: Value, packageDir: Path): LaunchPlan {
     val arguments = argumentsValue.stringArray {
         "run.js launch plan property 'arguments[$it]' must be a string"
     }
-    return LaunchPlan(executable, arguments)
+    return LaunchPlan(executable, arguments, if (value.hasMember("permissions")) requestedPermissions(value.getMember("permissions")) else null)
 }
 
-private fun Value.stringArray(error: (Long) -> String): List<String> = (0 until arraySize).map { index ->
+internal fun Value.stringArray(error: (Long) -> String): List<String> = (0 until arraySize).map { index ->
     val value = getArrayElement(index)
     require(value.isString) { error(index) }
     value.asString()
@@ -446,4 +446,36 @@ private fun contextJavaScript(context: RunContext): String {
         "packageDir" to JsonPrimitive(context.packageDir.toAbsolutePath().normalize().toString())
     ))
     return "(context => { Object.freeze(context.args); return Object.freeze(context); })($json)"
+}
+
+private fun requestedPermissions(value: Value): RequestedPermissions {
+    require(value.hasMembers() && !value.hasArrayElements() && !value.canExecute()) {
+        "run.js launch plan property 'permissions' must be an object"
+    }
+    fun strings(key: String): List<String> {
+        if (!value.hasMember(key)) return emptyList()
+        val array = value.getMember(key)
+        require(array.hasArrayElements()) { "Permission '$key' must be an array of non-empty strings" }
+        return array.stringArray { "Permission '$key[$it]' must be a non-empty string" }.also {
+            require(it.none(String::isEmpty)) { "Permission '$key' must contain non-empty strings" }
+        }
+    }
+    fun boolean(key: String): Boolean? {
+        if (!value.hasMember(key)) return null
+        val boolean = value.getMember(key)
+        require(boolean.isBoolean) { "Permission '$key' must be a boolean" }
+        return boolean.asBoolean()
+    }
+    val semantics = if (value.hasMember("std.semantics")) {
+        val date = value.getMember("std.semantics")
+        require(date.isString && Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}").matches(date.asString())) {
+            "Permission 'std.semantics' must be a YYYY-MM-DD date"
+        }
+        try { java.time.LocalDate.parse(date.asString()) } catch (e: java.time.DateTimeException) {
+            throw IllegalArgumentException("Permission 'std.semantics' must be a valid YYYY-MM-DD date", e)
+        }
+    } else null
+    return RequestedPermissions(strings("std.files.read"), strings("std.files.write"),
+        boolean("std.network.client"), boolean("std.network.server"), strings("std.environment"), semantics,
+        value.memberKeys - STANDARD_PERMISSION_KEYS, value.memberKeys.toSet())
 }

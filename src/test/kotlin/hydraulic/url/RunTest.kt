@@ -29,6 +29,39 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class RunTest : URLTestSupport() {
+    private fun permissionsPlan(permissions: String?): LaunchPlan {
+        val directory = (tempDir / "permissions-package").createDirectories()
+        val file = directory / "run.js"
+        file.writeText("export default { executable: 'tool', arguments: []" +
+            (permissions?.let { ", permissions: $it" } ?: "") + " };")
+        return evaluateRunJavaScript(file, RunContext("linux", "arm64", null, emptyList(), directory)) { error("unused") }
+    }
+
+    @Test
+    fun `permissions distinguish unrestricted from empty and retain unknown keys`() {
+        assertEquals(null, permissionsPlan(null).permissions)
+        assertNotNull(permissionsPlan("{}").permissions)
+        val requested = permissionsPlan("{'std.future': null, 'com.example.access': 42}").permissions!!
+        assertEquals(setOf("std.future", "com.example.access"), requested.unrecognized)
+        val typed = permissionsPlan("""{"std.files.read": ["."], "std.files.write": ["out"],
+            "std.network.client": true, "std.network.server": false, "std.environment": ["CC_*"],
+            "std.semantics": "2026-10-10"}""").permissions!!
+        assertEquals(listOf("."), typed.read)
+        assertEquals(listOf("out"), typed.write)
+        assertEquals(true, typed.networkClient)
+        assertEquals(false, typed.networkServer)
+    }
+
+    @Test
+    fun `permissions reject invalid known values`() {
+        val invalid = listOf("null", "[]", "true", "'text'", "() => 1",
+            "{'std.files.read': true}", "{'std.files.write': [1]}", "{'std.files.read': ['']}",
+            "{'std.environment': 'PATH'}", "{'std.environment': ['']}", "{'std.environment': [null]}",
+            "{'std.network.client': 1}", "{'std.network.server': 'true'}",
+            "{'std.semantics': false}", "{'std.semantics': '2026-02-30'}", "{'std.semantics': '2026-1-01'}")
+        invalid.forEach { assertFailsWith<IllegalArgumentException>(it) { permissionsPlan(it) } }
+    }
+
     @Test
     fun `JavaScript context preserves escaped strings and remains frozen`() {
         val directory = (tempDir / "context-package").createDirectories()
