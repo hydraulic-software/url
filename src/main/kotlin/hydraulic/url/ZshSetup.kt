@@ -13,7 +13,23 @@ internal val ZSH_SETUP_BLOCK = """
     $ZSH_SETUP_BEGIN
     # Prefix an HTTP(S) command line before zsh treats its slashes as a local path.
     function _hydraulic_url_accept_line() {
-      if [[ ${'$'}BUFFER =~ '^([[:space:]]*)(https?://[^[:space:]]+)' ]]; then
+      if [[ ${'$'}BUFFER =~ '^([[:space:]]*)[?][[:space:]]*(.*)' ]]; then
+        local leading=${'$'}match[1]
+        local command_line=${'$'}match[2]
+        local command_name rest
+        if [[ ${'$'}{command_line[1]} == '"' || ${'$'}{command_line[1]} == "'" ]]; then
+          local -a parts
+          parts=("${'$'}{(@z)command_line}")
+          command_name=${'$'}{(Q)parts[1]}
+          rest=${'$'}{command_line:${'$'}{#parts[1]}}
+        else
+          command_name=${'$'}{command_line%%[[:space:]]*}
+          rest=${'$'}{command_line:${'$'}{#command_name}}
+        fi
+        if [[ -n ${'$'}command_name ]]; then
+          BUFFER="${'$'}{leading}run -d ${'$'}{(q)command_name}${'$'}rest"
+        fi
+      elif [[ ${'$'}BUFFER =~ '^([[:space:]]*)(https?://[^[:space:]]+)' ]]; then
         local leading=${'$'}match[1]
         local command_name=${'$'}match[2]
         local rest=${'$'}{BUFFER:${'$'}{#MATCH}}

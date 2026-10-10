@@ -38,6 +38,49 @@ class RunTest : URLTestSupport() {
     }
 
     @Test
+    fun `zsh dry prefix quotes URL glob characters while preserving package arguments`() {
+        val zsh = listOf(Path.of("/bin/zsh"), Path.of("/usr/bin/zsh")).firstOrNull(Files::isExecutable)
+        assumeTrue(zsh != null)
+        val command = ZSH_SETUP_BLOCK + """
+
+            function zle() { :; }
+            function run() { print -rl -- "${'$'}@"; }
+            BUFFER='?https://example.test/tool?x=1&y=2 "two words" -d'
+            _hydraulic_url_accept_line
+            eval "${'$'}BUFFER"
+            BUFFER='?example.test/tool?x=1 "two words"'
+            _hydraulic_url_accept_line
+            eval "${'$'}BUFFER"
+        """.trimIndent()
+        val process = ProcessBuilder(zsh.toString(), "-f", "-c", command).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(0, process.waitFor(), output)
+        assertEquals(listOf("-d", "https://example.test/tool?x=1&y=2", "two words", "-d", "-d",
+            "example.test/tool?x=1", "two words"), output.trim().lines())
+    }
+
+    @Test
+    fun `zsh question prefix rewrites URLs domains and local paths for dry runs`() {
+        assertContains(ZSH_SETUP_BLOCK, "run -d")
+        val zsh = listOf(Path.of("/bin/zsh"), Path.of("/usr/bin/zsh")).firstOrNull(Files::isExecutable)
+        assumeTrue(zsh != null)
+        val command = ZSH_SETUP_BLOCK + """
+
+            function zle() { :; }
+            for line in '?https://example.test/tool arg' '?example.test arg' '?./local arg' '? /tmp/local arg' '?"./two words" arg'; do
+                BUFFER=${'$'}line
+                _hydraulic_url_accept_line
+                print -r -- "${'$'}BUFFER"
+            done
+        """.trimIndent()
+        val process = ProcessBuilder(zsh.toString(), "-f", "-c", command).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(0, process.waitFor(), output)
+        assertEquals(listOf("run -d https://example.test/tool arg", "run -d example.test arg",
+            "run -d ./local arg", "run -d /tmp/local arg", "run -d ./two\\ words arg"), output.trim().lines())
+    }
+
+    @Test
     fun `dry run prints plans without launching and validates permissions`() {
         val directory = (tempDir / "dry-package").createDirectories()
         (directory / "run.js").writeText("""export default { executable: '/does-not-exist', arguments: context.args,
