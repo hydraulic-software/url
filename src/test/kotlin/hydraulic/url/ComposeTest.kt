@@ -1,7 +1,7 @@
 package hydraulic.url
 
+import kotlin.io.path.div
 import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpServer
 import hydraulic.diskcache.LocalDiskCache
 import hydraulic.diskcache.http.HttpResourceCache
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
@@ -11,16 +11,11 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import picocli.CommandLine
 import java.io.ByteArrayOutputStream
-import java.net.InetSocketAddress
-import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kotlin.io.path.createDirectories
-import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isSymbolicLink
@@ -682,45 +677,13 @@ class ComposeTest {
         return process.waitFor() == 0
     }
 
-    private fun makeCache(): LocalDiskCache {
-        val config = LocalDiskCache.Configuration().apply {
-            minFreeDiskSpace = 0
-            maxSize = 100 * 1024 * 1024
-        }
-        return LocalDiskCache((tempDir / "cache-${System.nanoTime()}").createDirectories(), config).open()
-    }
-
-    private fun withServer(block: (TestServer) -> Unit) {
-        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        server.start()
-        try {
-            block(TestServer(server))
-        } finally {
-            server.stop(0)
-        }
-    }
-
-    private class TestServer(private val server: HttpServer) {
-        fun createContext(path: String, handler: (HttpExchange) -> Unit) = server.createContext(path, handler)
-        fun uri(path: String) = URI("http://127.0.0.1:${server.address.port}$path")
-    }
+    private fun makeCache(): LocalDiskCache = makeCache(tempDir / "cache-${System.nanoTime()}")
 
     private fun HttpExchange.respondBytes(bytes: ByteArray, cache: Boolean = true) {
         if (cache)
             responseHeaders.add("Cache-Control", "max-age=3600")
         sendResponseHeaders(200, bytes.size.toLong())
         responseBody.use { it.write(bytes) }
-    }
-
-    private fun zipOf(vararg files: Pair<String, String>): ByteArray = ByteArrayOutputStream().use { bytes ->
-        ZipOutputStream(bytes).use { zip ->
-            for ((name, contents) in files) {
-                zip.putNextEntry(ZipEntry(name))
-                zip.write(contents.toByteArray())
-                zip.closeEntry()
-            }
-        }
-        bytes.toByteArray()
     }
 
     /** A ZIP whose entries carry Unix modes, so scripts inside extracted directories are executable. */
@@ -735,17 +698,4 @@ class ComposeTest {
         bytes.toByteArray()
     }
 
-    private fun tarGzOf(vararg files: Pair<String, String>): ByteArray = ByteArrayOutputStream().use { bytes ->
-        org.apache.commons.compress.archivers.tar.TarArchiveOutputStream(
-            org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream(bytes)
-        ).use { tar ->
-            for ((name, contents) in files) {
-                val data = contents.toByteArray()
-                tar.putArchiveEntry(org.apache.commons.compress.archivers.tar.TarArchiveEntry(name).apply { size = data.size.toLong() })
-                tar.write(data)
-                tar.closeArchiveEntry()
-            }
-        }
-        bytes.toByteArray()
-    }
 }
