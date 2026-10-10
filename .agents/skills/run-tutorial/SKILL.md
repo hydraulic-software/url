@@ -55,6 +55,43 @@ available.
 variables, native APIs, processes, or threads. Use a separate downloaded or
 packaged executable for behavior that belongs in the launched program.
 
+## Dynamic permissions and dry runs
+
+Add a `permissions` object to the launch plan to request confinement. Omit it
+for unrestricted execution; `{}` requests only the baseline. Compute grants
+from `context.args`, absolute `context.cwd`, platform and version as needed:
+
+```js
+const output = context.args[0] ?? "out";
+export default {
+    executable: await url("https://example.com/tool"),
+    arguments: [output, ...context.args.slice(1)],
+    permissions: {
+        "std.files.read": [context.cwd],
+        "std.files.write": [output],
+        "std.environment": ["CC_*"],
+        "std.network.client": false,
+    },
+};
+```
+
+Read and write lists contain non-empty paths. Relative paths resolve against
+`context.cwd`, and write access includes reading. The baseline already allows
+reading and executing the package and every resolved cache entry, stdio and
+the terminal, system libraries and programs, a private temporary directory,
+and `PATH`, `HOME`, `TERM`, `LANG`, and `LC_*`. Request other environment names
+with `std.environment`; `*` globs are supported. Network client and server
+permissions are booleans. `std.semantics` is an optional `YYYY-MM-DD` date to
+opt in to later rules; earlier dates cannot downgrade timestamp-selected rules.
+Unknown standard and vendor keys are ignored without warnings.
+
+Use `run -d ./run.zip.d args` or `run --dry example.com/tool args` to evaluate,
+cache, validate and inspect permissions without launching. In an integrated
+zsh shell, `?./run.zip.d args` or `?example.com/tool args` does the same.
+Permission enforcement is best effort: macOS uses Seatbelt for executables
+outside `.app` bundles; other platforms and app bundles currently enforce only
+environment filtering. Inspect the dry run's enforcement status when testing.
+
 ## Package guidance
 
 Follow [the conventions](references/CONVENTIONS.md) when writing or reviewing a

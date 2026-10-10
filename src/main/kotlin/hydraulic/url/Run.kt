@@ -102,12 +102,15 @@ class Run(
                         temporary, environment, windows)
                 }
                 val executable = launchExecutable(plan.executable, windows)
-                val backend = sandboxBackend(executable, operatingSystem)
+                val backend = sandboxBackend(executable, operatingSystem, grant?.environment ?: environment)
                 if (dry) {
                     println(dryRunDescription(plan.copy(executable = executable), grant, backend))
                     0
                 } else {
-                    runResolvedPath(executable, plan.arguments, grant?.environment ?: environment)
+                    if (grant != null && backend == SandboxBackend.SEATBELT)
+                        runProcess(seatbeltCommand(executable, plan.arguments, grant), grant.environment)
+                    else
+                        runResolvedPath(executable, plan.arguments, grant?.environment ?: environment)
                 }
             } finally {
                 try {

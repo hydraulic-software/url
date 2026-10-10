@@ -24,3 +24,20 @@ type ComposeRemove = Readonly<{ remove: string }>;
 type ComposeOperation = ComposeCopy | ComposeRemove;
 
 declare function compose(operations: readonly [ComposeOperation, ...ComposeOperation[]]): Promise<string>;
+
+/** Omit permissions for unrestricted execution; {} requests only the baseline. */
+type RequestedPermissions = Readonly<{
+    "std.files.read"?: readonly string[];
+    "std.files.write"?: readonly string[];
+    "std.network.client"?: boolean;
+    "std.network.server"?: boolean;
+    "std.environment"?: readonly string[];
+    "std.semantics"?: string;
+    [permission: string]: unknown;
+}>;
+
+type LaunchPlan = Readonly<{
+    executable: string;
+    arguments: readonly string[];
+    permissions?: RequestedPermissions;
+}>;

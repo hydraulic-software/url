@@ -97,6 +97,22 @@ export default {
                 "absolute local directory",
             )
 
+            if sys.platform == "darwin":
+                stdio_package = root / "stdio-package"
+                stdio_package.mkdir()
+                (stdio_package / "run.js").write_text(
+                    'export default { executable: "/bin/cat", arguments: [], permissions: {} };\n'
+                )
+                stdin_path, stdout_path = root / "stdin", root / "stdout"
+                stdin_path.write_text("inherited stdio\n")
+                with stdin_path.open("rb") as stdin, stdout_path.open("wb") as stdout:
+                    stdio = subprocess.run(
+                        [str(RUN), "--progress=never", str(stdio_package)],
+                        stdin=stdin, stdout=stdout, stderr=subprocess.PIPE,
+                    )
+                check(stdio.returncode == 0, f"sandboxed stdio failed: {stdio.stderr!r}")
+                check(stdout_path.read_text() == "inherited stdio\n", "sandboxed stdio changed")
+
             missing = subprocess.run(
                 [str(RUN), "--progress=never", "./missing"],
                 cwd=root,

@@ -27,6 +27,11 @@
       {
         "returnType": "int",
         "parameterTypes": ["void*", "void*", "int"]
+      },
+      {
+        "returnType": "int",
+        "parameterTypes": ["int", "int", "void*"],
+        "options": { "firstVariadicArg": 2 }
       }
     ]
   },

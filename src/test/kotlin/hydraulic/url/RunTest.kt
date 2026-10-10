@@ -37,6 +37,26 @@ class RunTest : URLTestSupport() {
         return evaluateRunJavaScript(file, RunContext("linux", "arm64", null, emptyList(), directory)) { error("unused") }
     }
 
+    private fun seatbeltTool(executable: String, arguments: List<String>, permissions: String): Pair<Int, String> {
+        assumeTrue(Platform.isMacOS && Files.isExecutable(Path.of("/usr/bin/sandbox-exec")))
+        val directory = (tempDir / "seatbelt-package").createDirectories()
+        val json = kotlinx.serialization.json.JsonArray(arguments.map { kotlinx.serialization.json.JsonPrimitive(it) })
+        (directory / "run.js").writeText("export default { executable: '$executable', arguments: $json, permissions: $permissions };")
+        val context = RunContext("macos", "arm64", null, emptyList(), directory)
+        val plan = evaluateRunJavaScript(directory / "run.js", context) { error("unused") }
+        val temporary = Files.createTempDirectory(tempDir, "sandbox-").toRealPath()
+        try {
+            val grant = buildSandboxGrant(plan.permissions!!, SEMANTICS_REVISIONS.first(), context,
+                emptyList(), temporary, System.getenv(), false)
+            val process = ProcessBuilder(seatbeltCommand(plan.executable, plan.arguments, grant))
+                .redirectErrorStream(true).apply { environment().clear(); environment().putAll(grant.environment) }.start()
+            val output = process.inputStream.bufferedReader().readText()
+            return process.waitFor() to output
+        } finally { deleteSandboxTemporaryDirectory(temporary) }
+    }
+
+    private fun jsonPath(path: Path): String = kotlinx.serialization.json.JsonPrimitive(path.toString()).toString()
+
     @Test
     fun `zsh dry prefix quotes URL glob characters while preserving package arguments`() {
         val zsh = listOf(Path.of("/bin/zsh"), Path.of("/usr/bin/zsh")).firstOrNull(Files::isExecutable)
@@ -57,6 +77,131 @@ class RunTest : URLTestSupport() {
         assertEquals(0, process.waitFor(), output)
         assertEquals(listOf("-d", "https://example.test/tool?x=1&y=2", "two words", "-d", "-d",
             "example.test/tool?x=1", "two words"), output.trim().lines())
+    }
+
+    @Test
+    fun `Seatbelt preserves inherited file stdio without granting its paths`() {
+        assumeTrue(Platform.isMacOS)
+        val directory = (tempDir / "stdio-package").createDirectories()
+        val temporary = (tempDir / "stdio-temp").createDirectories().toRealPath()
+        val input = tempDir / "stdin"
+        val output = tempDir / "stdout"
+        input.writeText("inherited stdio")
+        val grant = buildSandboxGrant(RequestedPermissions(), SEMANTICS_REVISIONS.first(),
+            RunContext("macos", "arm64", null, emptyList(), directory), emptyList(), temporary, System.getenv(), false)
+        val redirectedGrant = grant.copy(stdio = listOf(StdioPath(0, input.toRealPath()), StdioPath(1, permissionPath(output))))
+        val process = ProcessBuilder(seatbeltCommand(Path.of("/bin/cat"), emptyList(), redirectedGrant))
+            .redirectInput(input.toFile()).redirectOutput(output.toFile()).redirectError(ProcessBuilder.Redirect.INHERIT)
+            .apply { environment().clear(); environment().putAll(grant.environment) }.start()
+        assertEquals(0, process.waitFor())
+        assertEquals("inherited stdio", output.readText())
+    }
+
+    @Test
+    fun `Seatbelt allows declared reads and denies other files`() {
+        val file = tempDir / "allowed.txt"
+        file.writeText("sandbox read")
+        val allowed = seatbeltTool("/bin/cat", listOf(file.toString()), "{ 'std.files.read': [${jsonPath(file)}] }")
+        assertEquals(0, allowed.first, allowed.second)
+        assertEquals("sandbox read", allowed.second)
+        val denied = seatbeltTool("/bin/cat", listOf(file.toString()), "{}")
+        assertTrue(denied.first != 0, denied.second)
+    }
+
+    @Test
+    fun `Seatbelt permits missing write paths without granting siblings`() {
+        val file = tempDir / "new-output"
+        val allowed = seatbeltTool("/bin/sh", listOf("-c", "printf created > '${file}'"),
+            "{ 'std.files.write': [${jsonPath(file)}] }")
+        assertEquals(0, allowed.first, allowed.second)
+        assertEquals("created", file.readText())
+        val sibling = tempDir / "forbidden-output"
+        val denied = seatbeltTool("/bin/sh", listOf("-c", "printf forbidden > '${sibling}'"),
+            "{ 'std.files.write': [${jsonPath(file)}] }")
+        assertTrue(denied.first != 0, denied.second)
+        assertFalse(Files.exists(sibling))
+        val nested = tempDir / "new-directory" / "nested" / "file"
+        val directories = seatbeltTool("/bin/sh", listOf("-c", "mkdir -p '${nested.parent}'; printf nested > '${nested}'"),
+            "{ 'std.files.write': [${jsonPath(tempDir / "new-directory")}] }")
+        assertEquals(0, directories.first, directories.second)
+        assertEquals("nested", nested.readText())
+    }
+
+    @Test
+    fun `Seatbelt denies network by default and permits declared clients`() {
+        assumeTrue(Platform.isMacOS)
+        withServer { server ->
+            server.createContext("/sandbox") { exchange ->
+                val bytes = "network allowed".toByteArray()
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            }
+            val args = listOf("--silent", "--show-error", "--noproxy", "*", "--max-time", "5", server.uri("/sandbox").toString())
+            val denied = seatbeltTool("/usr/bin/curl", args, "{}")
+            assertTrue(denied.first != 0, denied.second)
+            val allowed = seatbeltTool("/usr/bin/curl", args, "{ 'std.network.client': true }")
+            assertEquals(0, allowed.first, allowed.second)
+            assertEquals("network allowed", allowed.second)
+        }
+    }
+
+    @Test
+    fun `Seatbelt blocks Launch Services and children inherit restrictions`() {
+        val open = seatbeltTool("/usr/bin/open", listOf("-a", "Finder"), "{}")
+        assertTrue(open.first != 0, open.second)
+        val file = tempDir / "child-denied"
+        file.writeText("secret")
+        val child = seatbeltTool("/bin/sh", listOf("-c", "/bin/cat '${file}'"), "{}")
+        assertTrue(child.first != 0, child.second)
+    }
+
+    @Test
+    fun `sandboxed run filters environment and cleans the private temporary directory`() {
+        assumeFalse(Platform.isWindows)
+        val directory = (tempDir / "environment-package").createDirectories()
+        val output = tempDir / "environment-output"
+        val script = directory / "tool.sh"
+        script.writeText("""#!/bin/sh
+            printf '%s\n' "${'$'}{SECRET-unset}" "${'$'}CC_FLAGS" "${'$'}TMPDIR" > '${output}'
+            printf temporary > "${'$'}TMPDIR/file"
+        """.trimIndent())
+        script.toFile().setExecutable(true)
+        (directory / "run.js").writeText("""export default { executable: './tool.sh', arguments: [], permissions: {
+            'std.files.write': [${jsonPath(output)}], 'std.environment': ['CC_*'] } };""")
+        val run = Run(environment = System.getenv() + mapOf("SECRET" to "hidden", "CC_FLAGS" to "flags"))
+        run.url = directory.toString()
+        run.resolverOptions.cacheDirectory = tempDir / "environment-cache"
+        assertEquals(0, run.call())
+        val lines = output.readText().lines()
+        assertEquals("unset", lines[0])
+        assertEquals("flags", lines[1])
+        assertFalse(Files.exists(Path.of(lines[2])))
+    }
+
+    @Test
+    fun `Seatbelt parameters isolate path text and app bundles bypass confinement`() {
+        val temporary = (tempDir / "profile-temp").createDirectories()
+        val requested = RequestedPermissions(read = listOf("evil\" (allow default)"), networkClient = true)
+        val grant = buildSandboxGrant(requested, SEMANTICS_REVISIONS.first(),
+            RunContext("macos", "arm64", null, emptyList(), tempDir), emptyList(), temporary, emptyMap(), false)
+        val profile = seatbeltProfile(grant)
+        assertFalse(profile.source.contains("evil"))
+        assertTrue(profile.parameters.values.any { "evil" in it })
+        assertContains(profile.source, "com.apple.dnssd.service")
+        assertFalse(profile.source.contains("LaunchServices"))
+        assertTrue(isAppBundleExecutable(Path.of("/Applications/Example.app/Contents/MacOS/tool")))
+        assertEquals(SandboxBackend.ENVIRONMENT_ONLY,
+            sandboxBackend(Path.of("/Applications/Example.app/Contents/MacOS/tool"), "macos"))
+        assumeFalse(Platform.isWindows)
+        val bundle = (tempDir / "Example.app" / "Contents" / "MacOS").createDirectories()
+        val executable = bundle / "tool"
+        executable.writeText("#!/bin/sh\nexit 0\n")
+        executable.toFile().setExecutable(true)
+        val bin = (tempDir / "path-bin").createDirectories()
+        Files.createSymbolicLink(bin / "alias", executable)
+        assertEquals(SandboxBackend.ENVIRONMENT_ONLY,
+            sandboxBackend(Path.of("alias"), "macos", mapOf("PATH" to bin.toString())))
+        assertEquals(SandboxBackend.ENVIRONMENT_ONLY, sandboxBackend(Path.of("/bin/cat"), "linux"))
     }
 
     @Test

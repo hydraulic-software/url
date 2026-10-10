@@ -169,6 +169,46 @@ const {java, jar} = await urls({
 export default {executable: java, arguments: ["-jar", jar, ...context.args]};
 ```
 
+Inspect a package before launching it with `run --dry example.com/tool args` or
+`run -d ./run.zip.d args`. This evaluates and caches its resources, prints the
+executable, arguments and effective permissions to stdout, and exits without
+launching. Put `-d` before the target; after it, the flag goes to the package.
+With the installed zsh integration, prefix a command with `?`:
+`?example.com/tool args`, `?https://example.com/tool args`, or `?./run.zip.d args`.
+
+Packages can compute permissions from their arguments and working directory:
+
+```js
+export default {
+  executable: await url("https://example.com/compiler"),
+  arguments: context.args,
+  permissions: {
+    "std.files.read": [context.cwd],
+    "std.files.write": ["out"],
+    "std.environment": ["CC_*"],
+    "std.network.client": false,
+  },
+};
+```
+
+Omitting `permissions` runs unrestricted. An empty object requests only the
+baseline: package and resolved cache entries, system libraries and programs,
+stdio and terminal, a private temporary directory, and `PATH`, `HOME`, `TERM`,
+`LANG`, and `LC_*`. Write grants include read access. Relative paths use
+`context.cwd`; symlinks in existing prefixes resolve to their targets.
+Unknown permission keys are ignored and listed in dry runs.
+
+On macOS, executables outside `.app` bundles run through Seatbelt when
+`sandbox-exec` is available: file and network access are restricted, restrictions
+apply to children, and Launch Services is denied. App bundles currently receive
+only environment filtering and a private temporary directory, pending App
+Sandbox support. Linux and Windows likewise apply environment filtering and
+private temporary directories; file and network enforcement is deferred. Normal
+launches do not warn about permissions the platform cannot enforce; dry runs
+show enforcement status. Semantics use the verified package timestamp date, or
+the current UTC date, with `std.semantics` allowing an opt-in to later rules.
+See [SPEC-RUN.md](SPEC-RUN.md) for the permission contract.
+
 Every call starts immediately and runs concurrently with the others, so
 modules imported side by side resolve their URLs in parallel without
 coordinating. A rejected promise that the package does not handle fails the

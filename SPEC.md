@@ -177,3 +177,10 @@ from filesystem path components joined with `/`. Components containing
 literal backslashes, carriage returns, or newlines must be rejected, so a
 Unix filename cannot authenticate as a different nested path. These rules
 also apply to the supplied Unix package builder.
+
+## Run launch plans
+
+The companion `run` command's package and launch contract is defined in
+[SPEC-RUN.md](SPEC-RUN.md), including `context.cwd`, permissions, semantics
+revisions and `--dry` / `-d`. Dry runs evaluate and validate the package and
+print the effective launch plan to stdout without launching a process.

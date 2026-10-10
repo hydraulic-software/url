@@ -1,6 +1,12 @@
 package hydraulic.url
 
 import java.time.LocalDate
+import java.time.Instant
+import java.time.ZoneOffset
+import java.nio.file.Path
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import kotlinx.serialization.json.JsonPrimitive
 
 internal val STANDARD_PERMISSION_KEYS = setOf("std.files.read", "std.files.write", "std.network.client",
     "std.network.server", "std.environment", "std.semantics")
@@ -22,34 +28,36 @@ internal data class SemanticsRevision(val date: LocalDate)
 internal val SEMANTICS_REVISIONS = listOf(SemanticsRevision(LocalDate.of(2026, 10, 10)))
 
 internal fun selectRevision(
-    timestamp: java.time.Instant?,
+    timestamp: Instant?,
     declared: LocalDate?,
     today: LocalDate,
     revisions: List<SemanticsRevision> = SEMANTICS_REVISIONS
 ): SemanticsRevision {
     require(revisions.isNotEmpty())
-    val packageDate = timestamp?.atZone(java.time.ZoneOffset.UTC)?.toLocalDate() ?: today
+    val packageDate = timestamp?.atZone(ZoneOffset.UTC)?.toLocalDate() ?: today
     val selectedDate = maxOf(packageDate, declared ?: packageDate)
     return revisions.filter { it.date <= selectedDate }.maxByOrNull { it.date } ?: revisions.minBy { it.date }
 }
 
-internal data class GrantedPath(val requested: String, val path: java.nio.file.Path, val missing: Boolean)
+internal data class GrantedPath(val requested: String, val path: Path, val missing: Boolean)
 
 internal data class SandboxGrant(
     val requested: RequestedPermissions,
     val revision: SemanticsRevision,
     val read: List<GrantedPath>,
     val write: List<GrantedPath>,
-    val baselineRead: List<java.nio.file.Path>,
-    val temporaryDirectory: java.nio.file.Path,
+    val baselineRead: List<Path>,
+    val temporaryDirectory: Path,
+    val workingDirectory: Path,
+    val stdio: List<StdioPath>,
     val environment: Map<String, String>,
     val environmentMatches: Map<String, List<String>>
 )
 
 /** Resolve links before normalizing .., including links in the existing prefix of a missing path. */
-internal fun permissionPath(path: java.nio.file.Path): java.nio.file.Path {
+internal fun permissionPath(path: Path): Path {
     val absolute = path.toAbsolutePath()
-    if (java.nio.file.Files.exists(absolute, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return absolute.toRealPath()
+    if (Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) return absolute.toRealPath()
     return permissionPath(requireNotNull(absolute.parent)).resolve(absolute.fileName).normalize()
 }
 
@@ -72,8 +80,8 @@ internal fun buildSandboxGrant(
     requested: RequestedPermissions,
     revision: SemanticsRevision,
     context: RunContext,
-    cacheEntries: List<java.nio.file.Path>,
-    temporaryDirectory: java.nio.file.Path,
+    cacheEntries: List<Path>,
+    temporaryDirectory: Path,
     environment: Map<String, String>,
     windows: Boolean
 ): SandboxGrant {
@@ -81,22 +89,22 @@ internal fun buildSandboxGrant(
     require(revision in SEMANTICS_REVISIONS) { "Unsupported semantics revision: ${revision.date}" }
     fun paths(values: List<String>) = values.map { value ->
         val path = permissionPath(context.cwd.resolve(value))
-        GrantedPath(value, path, !java.nio.file.Files.exists(path))
+        GrantedPath(value, path, !Files.exists(path))
     }
     val filtered = sandboxEnvironment(environment, requested, windows).toMutableMap()
     val tempNames = if (windows) listOf("TEMP", "TMP") else listOf("TMPDIR")
     filtered.keys.removeAll { key -> tempNames.any { key.equals(it, ignoreCase = windows) } }
     tempNames.forEach { filtered[it] = temporaryDirectory.toString() }
     return SandboxGrant(requested, revision, paths(requested.read), paths(requested.write),
-        (listOf(context.packageDir) + cacheEntries).map(::permissionPath).distinct(), temporaryDirectory,
+        (listOf(context.packageDir) + cacheEntries).map(::permissionPath).distinct(), temporaryDirectory, permissionPath(context.cwd), inheritedMacOSStdio(),
         filtered, requested.environment.associateWith { pattern ->
             environment.keys.filter { environmentMatches(pattern, it, windows) }.sorted()
         })
 }
 
-internal fun deleteSandboxTemporaryDirectory(directory: java.nio.file.Path) {
-    java.nio.file.Files.walk(directory).use { paths ->
-        paths.sorted(Comparator.reverseOrder()).forEach(java.nio.file.Files::deleteIfExists)
+internal fun deleteSandboxTemporaryDirectory(directory: Path) {
+    Files.walk(directory).use { paths ->
+        paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
     }
 }
 
@@ -105,12 +113,24 @@ internal enum class SandboxBackend(val description: String, val confinesProcess:
     SEATBELT("macOS Seatbelt", true)
 }
 
-internal fun sandboxBackend(executable: java.nio.file.Path, operatingSystem: String): SandboxBackend =
-    SandboxBackend.ENVIRONMENT_ONLY
+internal fun sandboxBackend(
+    executable: Path,
+    operatingSystem: String,
+    environment: Map<String, String> = System.getenv()
+): SandboxBackend {
+    val actualExecutable = if (executable.parent == null)
+        environment["PATH"].orEmpty().split(java.io.File.pathSeparator).asSequence()
+            .map { Path.of(it).resolve(executable).toAbsolutePath() }
+            .firstOrNull(Files::isExecutable) ?: executable
+    else executable
+    return if (operatingSystem == "macos" && !isAppBundleExecutable(actualExecutable) &&
+        Files.isExecutable(Path.of("/usr/bin/sandbox-exec")))
+        SandboxBackend.SEATBELT else SandboxBackend.ENVIRONMENT_ONLY
+}
 
 internal fun dryRunDescription(plan: LaunchPlan, grant: SandboxGrant?, backend: SandboxBackend): String = buildString {
     // JSON quoting makes whitespace, quotes and control characters in arguments unambiguous.
-    fun quoted(value: String) = kotlinx.serialization.json.JsonPrimitive(value).toString()
+    fun quoted(value: String) = JsonPrimitive(value).toString()
     appendLine("Executable:  ${quoted(plan.executable.toString())}")
     appendLine("Arguments:   ${plan.arguments.joinToString(" ") { quoted(it) }}")
     if (grant == null) {
@@ -139,8 +159,14 @@ internal fun dryRunDescription(plan: LaunchPlan, grant: SandboxGrant?, backend: 
     appendLine("Baseline:")
     grant.baselineRead.forEach { appendLine("  read, execute  ${quoted(it.toString())}") }
     appendLine("  read, execute  system libraries, configuration and programs")
+    if (backend == SandboxBackend.SEATBELT) {
+        SEATBELT_SYSTEM_PATHS.forEach { appendLine("    ${quoted(it)}") }
+        appendLine("  directory metadata and symbolic-link traversal")
+        appendLine("  working-directory traversal  ${quoted(grant.workingDirectory.toString())}")
+    }
     appendLine("  read, write  private temporary directory ${quoted(grant.temporaryDirectory.toString())}")
     appendLine("  stdio and controlling terminal")
+    grant.stdio.forEach { appendLine("    fd ${it.descriptor}  ${quoted(it.path.toString())}") }
     appendLine("  environment  ${grant.environment.keys.sorted().joinToString(" ")}")
     if (grant.requested.unrecognized.isNotEmpty()) {
         appendLine("Unrecognized keys (not granted):")
