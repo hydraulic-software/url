@@ -208,7 +208,7 @@ relative ECMAScript module imports.
 
 `url` sets the +x bit on UNIX automatically for files that are detected to be native binaries or have a hashbang line.
 
-URLs can be hash locked by adding `#sha256=....`. A mismatch will cause `url` to exit with an error code and no path is printed. For archive members and extracted directories such as `tool.zip/` the hash is of the (innermost) archive itself.
+URLs can be hash locked by adding `#sha256=....`. A mismatch will cause `url` to exit with an error code and no path is printed. For archive members and extracted directories such as `tool.zip/` the hash is of the (innermost) archive itself. A nested archive URL such as `outer.zip/inner.zip` returns the inner archive file; append `/` to extract its root directory.
 
 On macOS `url` quarantines what it downloads the way a web browser does, so Gatekeeper checks programs before they run: every downloaded file, and every file and directory extracted from an archive, is marked unless you pass `--no-gatekeeper`. That option also removes quarantine metadata from an already cached file, and archives are extracted separately with and without it. Programs are otherwise expected to be signed, and will be checked by Apple for malware. It's not recommended to override Gatekeeper: signing is cheap and helps keep the macOS ecosystem secure. If you distribute binaries, you have a responsibility to do it. If you don't like the code signing regime Apple maintains, use Linux!
 

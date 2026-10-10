@@ -162,6 +162,14 @@ class URLResolver private constructor(
                 throw e
         }
 
+        // A nested archive requested without a trailing slash is a file member of its outer archive.
+        // Only a trailing slash asks us to extract that file as an archive root.
+        if (archive?.member?.isEmpty() == true) {
+            val outer = parseArchiveURL(uri, 1) ?: throw HttpStatusException(uri, 404)
+            val identityOuter = parseArchiveURL(cacheIdentity, 1) ?: throwInvalidArchiveIdentity()
+            return resolveArchive(outer, identityOuter)
+        }
+
         // Expected... we didn't find /.../foo.zip/bar - that would be a weird URL to really serve.
         // Try again with just /.../foo.zip
         return resolveArchive(
@@ -374,7 +382,7 @@ class URLResolver private constructor(
             }
             digest?.let { actual ->
                 val actualHash = HexFormat.of().formatHex(actual.digest())
-                requireSha256(expectedArchiveHash!!, actualHash, "archive has $actualHash")
+                requireSha256(expectedArchiveHash, actualHash, "archive has $actualHash")
             }
             // copyDirectory does not carry quarantine over from a revalidated extraction.
             if (quarantinesResults(gatekeeper))

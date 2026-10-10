@@ -756,6 +756,25 @@ class URLResolverTest : URLTestSupport() {
     }
 
     @Test
+    fun `hash lock on a nested archive file authenticates that file`() = withServer { server ->
+        val innerZip = zipOf("file.txt" to "nested contents")
+        val outerZip = zipOfBytes("inner.zip" to innerZip)
+        server.createContext("/") {
+            if (it.requestURI.path == "/outer.zip") it.respond(outerZip) else it.respond404()
+        }
+        makeCache().use { cache ->
+            URLResolver(cache).resolve(server.uri("/outer.zip/inner.zip#sha256=${innerZip.sha256()}"))
+                .use { assertEquals(innerZip.sha256(), it.path.sha256()) }
+            val mismatch = assertFailsWith<IllegalArgumentException> {
+                URLResolver(cache).resolve(server.uri("/outer.zip/inner.zip#sha256=${outerZip.sha256()}"))
+            }
+            assertContains(mismatch.message.orEmpty(), "SHA-256 mismatch")
+            URLResolver(cache).resolve(server.uri("/outer.zip/inner.zip"))
+                .use { assertEquals(innerZip.sha256(), it.path.sha256()) }
+        }
+    }
+
+    @Test
     fun `locked nested archives cannot write through outer archive symlinks`() = withServer { server ->
         val innerZip = zipOf("file.txt" to "authenticated member")
         val outerTar = maliciousSymlinkTarGz("inner.zip" to innerZip)
