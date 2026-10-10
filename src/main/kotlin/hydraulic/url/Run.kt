@@ -102,15 +102,14 @@ class Run(
 internal data class RunTarget(val locator: String, val version: String?)
 
 internal fun parseRunTarget(target: String): RunTarget {
-    val suffixStart = listOf(target.indexOf('?'), target.indexOf('#')).filter { it >= 0 }.minOrNull() ?: target.length
-    val locator = target.substring(0, suffixStart)
+    val (locator, tail) = target.splitURLTail()
     val versionMarker = locator.lastIndexOf('@')
     if (versionMarker < 0 || versionMarker == locator.lastIndex)
         return RunTarget(target, null)
     val version = locator.substring(versionMarker + 1)
     if ('/' in version)
         return RunTarget(target, null)
-    return RunTarget(locator.substring(0, versionMarker) + target.substring(suffixStart), version)
+    return RunTarget(locator.substring(0, versionMarker) + tail, version)
 }
 
 internal fun runOperatingSystem(
@@ -163,9 +162,7 @@ internal fun runTargetURI(uri: URI): URI {
         return uri
     val suffix = "run.zip/run.js"
     val text = uri.toASCIIString()
-    val delimiter = listOf(text.indexOf('?'), text.indexOf('#')).filter { it >= 0 }.minOrNull() ?: text.length
-    val base = text.substring(0, delimiter)
-    val tail = text.substring(delimiter)
+    val (base, tail) = text.splitURLTail()
     return URI(base + (if (base.endsWith('/')) "" else "/") + suffix + tail)
 }
 
@@ -228,8 +225,8 @@ internal fun launchExecutable(executable: Path, windows: Boolean): Path {
 
 private fun URI.withExecutableSuffix(): URI {
     val text = toASCIIString()
-    val delimiter = listOf(text.indexOf('?'), text.indexOf('#')).filter { it >= 0 }.minOrNull() ?: text.length
-    return URI(text.substring(0, delimiter) + ".exe" + text.substring(delimiter))
+    val (base, tail) = text.splitURLTail()
+    return URI(base + ".exe" + tail)
 }
 
 internal fun ensureHardLink(source: Path, target: Path): Boolean {
@@ -268,4 +265,10 @@ else
 fun main(args: Array<String>) {
     val exitCode = commandLine("run").execute(*args)
     kotlin.system.exitProcess(exitCode)
+}
+
+/** Separates a URL's path spelling from its query and fragment without decoding either. */
+private fun String.splitURLTail(): Pair<String, String> {
+    val delimiter = indexOfFirst { it == '?' || it == '#' }.takeIf { it >= 0 } ?: length
+    return substring(0, delimiter) to substring(delimiter)
 }
