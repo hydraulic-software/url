@@ -24,9 +24,9 @@ import kotlin.io.path.exists
 )
 class Run(
     private val executablePath: () -> Path = ::currentExecutablePath,
-    private val windows: Boolean = System.getProperty("os.name").startsWith("Windows", ignoreCase = true),
+    private val windows: Boolean = Platform.isWindows,
     private val environment: Map<String, String> = System.getenv(),
-    private val operatingSystem: String = runOperatingSystem(),
+    private val operatingSystem: String = Platform.os,
     private val architecture: String = runArchitecture()
 ) : Callable<Int> {
     @Parameters(index = "0", arity = "0..1", paramLabel = "URL_OR_DIRECTORY")
@@ -110,18 +110,6 @@ internal fun parseRunTarget(target: String): RunTarget {
     if ('/' in version)
         return RunTarget(target, null)
     return RunTarget(locator.substring(0, versionMarker) + tail, version)
-}
-
-internal fun runOperatingSystem(
-    osName: String = System.getProperty("os.name"),
-    runtimeName: String = System.getProperty("java.runtime.name", "")
-): String = when {
-    runtimeName.contains("android", ignoreCase = true) -> "android"
-    osName.startsWith("Linux", ignoreCase = true) -> "linux"
-    osName.startsWith("Mac", ignoreCase = true) || osName.startsWith("Darwin", ignoreCase = true) -> "macos"
-    osName.startsWith("FreeBSD", ignoreCase = true) -> "freebsd"
-    osName.startsWith("Windows", ignoreCase = true) -> "windows"
-    else -> osName.lowercase(Locale.ROOT)
 }
 
 internal fun runArchitecture(architecture: String = System.getProperty("os.arch")): String =

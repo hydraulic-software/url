@@ -65,7 +65,7 @@ private fun isMachOContent(prefix: ByteArray): Boolean {
 
 /** Quarantines or un-quarantines a downloaded file, as a web browser would mark it. */
 internal fun Path.applyGatekeeperQuarantine(enabled: Boolean) {
-    if (!IS_MAC_OS || !isRegularFile())
+    if (!Platform.isMacOS || !isRegularFile())
         return
     if (enabled)
         MacOSQuarantine.apply(this)
@@ -75,13 +75,13 @@ internal fun Path.applyGatekeeperQuarantine(enabled: Boolean) {
 
 /** Quarantines every file and directory in a fresh extraction, as Archive Utility does for a downloaded archive. */
 internal fun Path.quarantineTree() {
-    if (IS_MAC_OS)
+    if (Platform.isMacOS)
         MacOSQuarantine.applyTree(this)
 }
 
 /** Removes quarantine from every file and directory in a tree, for results built with Gatekeeper disabled. */
 internal fun Path.removeQuarantineTree() {
-    if (!IS_MAC_OS)
+    if (!Platform.isMacOS)
         return
     Files.walk(this).use { paths ->
         for (path in paths) {
@@ -92,7 +92,7 @@ internal fun Path.removeQuarantineTree() {
 }
 
 /** Whether results are quarantined, which changes the content of extracted archive cache entries. */
-internal fun quarantinesResults(gatekeeper: Boolean): Boolean = gatekeeper && IS_MAC_OS
+internal fun quarantinesResults(gatekeeper: Boolean): Boolean = gatekeeper && Platform.isMacOS
 
 private fun ByteArray.uint32(offset: Int, littleEndian: Boolean): UInt {
     val bytes = if (littleEndian) (offset + 3 downTo offset) else (offset..offset + 3)
@@ -112,6 +112,5 @@ private val THIN_MACH_O_MAGICS = setOf(
 )
 private val FAT_BIG_ENDIAN_MAGICS = setOf(0xcafebabeu, 0xcafebabfu)
 private val FAT_LITTLE_ENDIAN_MAGICS = setOf(0xbebafecau, 0xbfbafecau)
-private val IS_MAC_OS = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)
 private val CACHE_CONTROL_COMMENT = Regex("(?:#|//)\\s*Cache-Control:\\s*(.*)", RegexOption.IGNORE_CASE)
 private const val MAX_HASHBANG_HEADER_BYTES = 8192

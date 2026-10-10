@@ -36,7 +36,7 @@ internal class Composer(
     cache: DiskCache,
     private val quarantine: Boolean,
     private val minimumFreeSpaceBytes: Long,
-    private val windows: Boolean = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+    private val windows: Boolean = Platform.isWindows
 ) {
     private val cache = CompleteEntryDiskCache(cache)
 

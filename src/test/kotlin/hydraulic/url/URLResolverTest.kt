@@ -1291,11 +1291,11 @@ class URLResolverTest {
 
     @Test
     fun `runscript platform values are normalized`() {
-        assertEquals("linux", runOperatingSystem("Linux"))
-        assertEquals("macos", runOperatingSystem("Mac OS X"))
-        assertEquals("freebsd", runOperatingSystem("FreeBSD"))
-        assertEquals("android", runOperatingSystem("Linux", "Android Runtime"))
-        assertEquals("windows", runOperatingSystem("Windows 11"))
+        assertEquals("linux", Platform.operatingSystem("Linux"))
+        assertEquals("macos", Platform.operatingSystem("Mac OS X"))
+        assertEquals("freebsd", Platform.operatingSystem("FreeBSD"))
+        assertEquals("android", Platform.operatingSystem("Linux", "Android Runtime"))
+        assertEquals("windows", Platform.operatingSystem("Windows 11"))
         assertEquals("x86_64", runArchitecture("amd64"))
         assertEquals("arm64", runArchitecture("aarch64"))
         assertEquals("riscv64", runArchitecture("riscv64"))
