@@ -23,7 +23,6 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import java.util.Date
-import kotlin.io.path.inputStream
 
 private const val TIMESTAMP_FILE = "timestamp.tsr"
 private const val TIMESTAMPING_EKU = "1.3.6.1.5.5.7.3.8"
@@ -77,7 +76,7 @@ internal fun canonicalRunManifest(packageDir: Path): ByteArray {
         require('\n' !in relative && '\r' !in relative) {
             "Run package paths may not contain newlines: $relative"
         }
-        relative to sha256(path)
+        relative to path.sha256()
     }.sortedWith { left, right -> compareUtf8(left.first, right.first) }
 
     return buildString {
@@ -142,20 +141,6 @@ private fun validateTimestampSigner(signedData: CMSSignedData, signer: X509Certi
     } catch (e: Exception) {
         throw IllegalArgumentException("Timestamp signer certificate is not trusted", e)
     }
-}
-
-private fun sha256(path: Path): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    path.inputStream().use { input ->
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0)
-                break
-            digest.update(buffer, 0, count)
-        }
-    }
-    return digest.digest().joinToString("") { it.toUByte().toString(16).padStart(2, '0') }
 }
 
 private fun compareUtf8(left: String, right: String): Int {

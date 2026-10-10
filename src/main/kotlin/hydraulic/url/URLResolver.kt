@@ -135,9 +135,7 @@ class URLResolver private constructor(
             if (expectedSha256Hash != null && resolution.verifiedSha256 != expectedSha256Hash) {
                 require(resolved.path.isRegularFile()) { "SHA-256 locking requires a file or archive result" }
                 val actualHash = resolved.path.sha256()
-                require(actualHash.equals(expectedSha256Hash, ignoreCase = true)) {
-                    "SHA-256 mismatch: expected $expectedSha256Hash but resolved $actualHash"
-                }
+                requireSha256(expectedSha256Hash, actualHash, actualHash)
             }
             resolved.path.makeExecutableIfRecognized()
             resolved.path.applyGatekeeperQuarantine(gatekeeper)
@@ -192,9 +190,7 @@ class URLResolver private constructor(
         var metadata = entry.metadata
         if (expectedHash != null && metadata[HTTP_CONTENT_HASH_METADATA] != expectedHash) {
             try {
-                require(file.sha256().equals(expectedHash, ignoreCase = true)) {
-                    "SHA-256 mismatch: expected $expectedHash but resolved $uri"
-                }
+                requireSha256(expectedHash, file.sha256(), uri.toString())
             } catch (e: Exception) {
                 entry.close()
                 throw e
@@ -303,9 +299,7 @@ class URLResolver private constructor(
             if (expectedArchiveHash != null && downloaded.verifiedSha256 != expectedArchiveHash) {
                 val expected = expectedArchiveHash
                 val actual = downloaded.resource.path.sha256()
-                require(actual.equals(expected, ignoreCase = true)) {
-                    "SHA-256 mismatch: expected $expected but resolved archive has $actual"
-                }
+                requireSha256(expected, actual, "archive has $actual")
             }
             return Resolution(
                 resolveExtractedArchive(archive, downloaded.resource.path, expectedArchiveHash, downloaded.resource.contentRevision),
@@ -382,9 +376,7 @@ class URLResolver private constructor(
             }
             digest?.let { actual ->
                 val actualHash = HexFormat.of().formatHex(actual.digest())
-                require(actualHash.equals(expectedArchiveHash, ignoreCase = true)) {
-                    "SHA-256 mismatch: expected $expectedArchiveHash but resolved archive has $actualHash"
-                }
+                requireSha256(expectedArchiveHash!!, actualHash, "archive has $actualHash")
             }
             // copyDirectory does not carry quarantine over from a revalidated extraction.
             if (quarantinesResults(gatekeeper))
@@ -541,19 +533,6 @@ private val SHA256_HEX = Regex("[0-9A-Fa-f]{64}")
 
 private fun URI.withoutFragment(): URI = rawFragment?.let { URI(toASCIIString().substringBefore('#')) } ?: this
 
-internal fun Path.sha256(): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    Files.newInputStream(this).use { input ->
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        while (true) {
-            val read = input.read(buffer)
-            if (read < 0)
-                break
-            digest.update(buffer, 0, read)
-        }
-    }
-    return HexFormat.of().formatHex(digest.digest())
-}
 
 /**
  * A resolved path and the lease on the cache entry containing it.
