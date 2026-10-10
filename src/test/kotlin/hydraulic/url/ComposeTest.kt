@@ -537,15 +537,31 @@ class ComposeTest {
     }
 
     @Test
-    fun `entries cached without a revision receive a stable one`() = withServer { server ->
-        server.createContext("/legacy") { it.respondBytes("legacy".toByteArray()) }
-        makeCache().use { cache ->
-            // An entry written directly by the HTTP cache library has no revision, as entries from older versions do not.
-            HttpResourceCache(cache).resolve(server.uri("/legacy")).use { assertFalse(CONTENT_REVISION_METADATA in it.metadata) }
-            val first = URLResolver(cache).resolve(server.uri("/legacy")).use { it.contentRevision }
-            assertNotNull(first)
-            assertEquals(first, URLResolver(cache).resolve(server.uri("/legacy")).use { it.contentRevision })
+    fun `resolver sessions ignore legacy entries and record stable revisions`() = withServer { server ->
+        var contents = "legacy"
+        server.createContext("/legacy") { it.respondBytes(contents.toByteArray()) }
+        val cacheDirectory = tempDir / "legacy-cache"
+        makeCache(cacheDirectory).use { cache ->
+            HttpResourceCache(cache).resolve(server.uri("/legacy")).use {
+                assertFalse(CONTENT_REVISION_METADATA in it.metadata)
+            }
         }
+        contents = "new layout"
+        val options = ResolverOptions(emptyMap()).apply {
+            this.cacheDirectory = cacheDirectory
+            progress = "never"
+            downloadPolicy.minimumFreeSpaceMB = 0
+        }
+        fun revision() = options.withResolver { _, resolver, _ ->
+            resolver.resolve(server.uri("/legacy")).use {
+                assertEquals("new layout", it.path.readText())
+                assertTrue(it.path.startsWith(cacheDirectory.resolve(CACHE_LAYOUT_DIRECTORY)))
+                it.contentRevision
+            }
+        }
+        val first = revision()
+        assertNotNull(first)
+        assertEquals(first, revision())
     }
 
     // End to end

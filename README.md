@@ -25,6 +25,10 @@ $ https://example.com --version
 ```
 
 They're like curl, but simpler when you don't want to manage the downloaded files. Useful with substitutions!
+The cache uses a versioned `v2` subdirectory inside the selected cache directory.
+Entries from the previous layout are ignored and downloaded again; the old
+entries can be deleted.
+
 `url` cleans up the cache when it grows too large, and refuses new downloads
 when less than 100 MB is free, and checks space throughout downloads and
 extraction. Override the threshold with

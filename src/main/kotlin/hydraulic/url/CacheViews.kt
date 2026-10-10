@@ -62,8 +62,7 @@ internal fun newContentRevision(): String = UUID.randomUUID().toString()
  * Gives each newly accepted HTTP response body a content revision.
  *
  * The HTTP cache carries an entry's previous metadata forward on `304 Not Modified`, so a revision that is already present
- * is kept. A new body starts from fresh metadata and so receives a new revision. [URLResolver] would otherwise add the
- * missing revision afterwards, which costs an extra rewrite of the entry.
+ * is kept. A new body starts from fresh metadata and so receives a new revision.
  */
 internal class ContentRevisionCache(private val delegate: DiskCache) : DiskCache by delegate {
     override fun getAndCustomizeEntry(

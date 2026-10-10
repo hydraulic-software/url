@@ -58,7 +58,8 @@ must use HTTP or HTTPS.
   input URL exactly as supplied. This requires exactly one input. An archive
   member requires a correspondingly archive-shaped cache-key URL.
 - `--cache-dir=PATH`: select a cache directory. Its internal layout and the
-  default cache location are not part of this specification.
+  default cache location are not part of this specification. Cache layout
+  upgrades may invalidate existing entries and require fresh downloads.
 - `-r`, `--refresh`: ignore a cached HTTP response and fetch the resource
   again. The refreshed response replaces the cache entry used by later
   resolutions.

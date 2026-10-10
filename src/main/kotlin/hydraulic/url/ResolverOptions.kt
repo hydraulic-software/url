@@ -8,6 +8,8 @@ import picocli.CommandLine.Mixin
 import picocli.CommandLine.Option
 import java.nio.file.Path
 
+internal const val CACHE_LAYOUT_DIRECTORY = "v2"
+
 /** Shared command-line options and lifetime of a resolver session. */
 class ResolverOptions(private val environment: Map<String, String> = System.getenv()) {
     @Option(names = ["--cache-dir"], description = ["Shared cache directory."])
@@ -38,8 +40,10 @@ class ResolverOptions(private val environment: Map<String, String> = System.gete
         try {
             val minimumBytes = downloadPolicy.minimumFreeSpaceBytes(environment)
             preparePrivateCacheDirectory(cacheDirectory)
-            return LocalDiskCache(cacheDirectory, downloadPolicy.cacheConfiguration()).open().use { cache ->
-                val transport = MinimumFreeSpaceHttpTransport(UserAgentHttpTransport(), DiskSpaceGuard(minimumBytes, cacheDirectory))
+            val layoutDirectory = cacheDirectory.resolve(CACHE_LAYOUT_DIRECTORY)
+            preparePrivateCacheDirectory(layoutDirectory)
+            return LocalDiskCache(layoutDirectory, downloadPolicy.cacheConfiguration()).open().use { cache ->
+                val transport = MinimumFreeSpaceHttpTransport(UserAgentHttpTransport(), DiskSpaceGuard(minimumBytes, layoutDirectory))
                 val resolver = URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh,
                     transport = transport, minimumFreeSpaceBytes = minimumBytes)
                 action(cache, resolver, tracker)

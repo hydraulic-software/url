@@ -177,9 +177,6 @@ class URLResolver(
             val policy = file.hashbangCachePolicy()
             if (policy != null && metadata[HTTP_CACHE_CONTROL_METADATA] != policy)
                 metadata = metadata + (HTTP_CACHE_CONTROL_METADATA to policy)
-            // Entries cached before revisions were recorded get one now; it identifies the body this entry holds.
-            if (CONTENT_REVISION_METADATA !in metadata)
-                metadata = metadata + (CONTENT_REVISION_METADATA to newContentRevision())
             val finalEntry = if (metadata == entry.metadata) {
                 entry
             } else {
@@ -190,25 +187,11 @@ class URLResolver(
             return finalEntry.asSingleFile()
         }
 
-            /** Reuses a body proven to match a hash lock without contacting the origin. */
+        /** Reuses a body proven to match a hash lock without contacting the origin. */
         private fun findHashLockedEntry(cacheIdentity: URI, expectedHash: String): DiskCache.OpenedEntry? {
-            val key = HttpResourceCache.cacheKey(cacheIdentity)
-            val cached = completeCache.lookup(key) ?: return null
+            val cached = completeCache.lookup(HttpResourceCache.cacheKey(cacheIdentity)) ?: return null
             if (cached.metadata[HTTP_CONTENT_HASH_METADATA] == expectedHash)
                 return cached
-
-            // Otherwise the cache entry is damaged. Try to fix it. TODO: Just get rid of this; we can do a one time wipe of the cache.
-            val file = try {
-                cached.directory.listDirectoryEntries().singleOrNull()
-            } catch (e: IOException) {
-                throwDamagedCacheEntry(cached, "content directory disappeared", e)
-            }
-            if (file?.isRegularFile() == true && file.sha256().equals(expectedHash, ignoreCase = true)) {
-                val oldDirectory = cached.directory
-                val metadata = cached.metadata + (HTTP_CONTENT_HASH_METADATA to expectedHash)
-                cached.close()
-                return replaceCacheEntry(key, oldDirectory, metadata)
-            }
             cached.close()
             return null
         }
@@ -261,9 +244,7 @@ class URLResolver(
             if (archive.archiveURI.isTopLevelRemoteTarball()) {
                 if (expectedArchiveHash != null || !completeCache.has(HttpResourceCache.cacheKey(identityArchive.archiveURI)))
                     return resolveStreamedArchive(archive, identityArchive, expectedArchiveHash)
-                val key = HttpResourceCache.cacheKey(identityArchive.archiveURI)
-                val downloaded = resolveHttpResource(archive.archiveURI, identityArchive.archiveURI)
-                    .withContentRevision(key).asSingleFile()
+                val downloaded = resolveHttpResource(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
                 return downloaded.use {
                     resolveExtractedArchive(archive, it.path, revision = it.contentRevision)
                 }
@@ -439,16 +420,6 @@ class URLResolver(
         private fun ArchiveURL.isRootRequest(uri: URI): Boolean = member.isEmpty() && uri.rawPath.endsWith('/')
 
         private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(singleFile(), this, metadata[CONTENT_REVISION_METADATA])
-
-        /** Returns this HTTP entry, first recording a content revision if it was cached before revisions existed. */
-        private fun DiskCache.OpenedEntry.withContentRevision(key: String): DiskCache.OpenedEntry {
-            if (CONTENT_REVISION_METADATA in metadata)
-                return this
-            val oldDirectory = directory
-            val updated = metadata + (CONTENT_REVISION_METADATA to newContentRevision())
-            close()
-            return replaceCacheEntry(key, oldDirectory, updated)
-        }
 
         private fun DiskCache.OpenedEntry.singleFile(): Path {
             val files = try {
