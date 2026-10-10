@@ -403,3 +403,22 @@ private val DRIVE_PREFIX = Regex("^[A-Za-z]:")
  */
 internal fun foldName(name: String): String =
     Normalizer.normalize(Normalizer.normalize(name, Normalizer.Form.NFC).uppercase(Locale.ROOT).lowercase(Locale.ROOT), Normalizer.Form.NFC)
+
+/** Paths returned to run.js that may be used as composition sources during one evaluation. */
+internal class ComposeSources {
+    private val sources = HashMap<String, ComposeSource?>()
+
+    @Synchronized
+    fun add(path: Path, source: ComposeSource) {
+        val key = path.toAbsolutePath().normalize().toString()
+        // One path reached through sources with different identities has no single identity, so it cannot be used.
+        if (key in sources && sources[key]?.identity != source.identity)
+            sources[key] = source.copy(identity = null)
+        else
+            sources[key] = source
+    }
+
+    @Synchronized
+    fun get(path: String): ComposeSource? = sources[path]
+}
+

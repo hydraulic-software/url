@@ -57,11 +57,13 @@ class Run(
         val localPackage = localRunPackage(target.locator)
         return resolverOptions.withResolver { cache, resolver, _ ->
             val minimumFreeSpace = resolverOptions.downloadPolicy.minimumFreeSpaceBytes(environment)
-            val packageResource = if (localPackage == null)
-                resolver.resolve(runTargetURI(parseURL(target.locator)))
-            else
-                null
+            val opened = ConcurrentLinkedQueue<ResolvedURL>()
             try {
+                val packageResource = if (localPackage == null)
+                    resolver.resolve(runTargetURI(parseURL(target.locator)))
+                else
+                    null
+                packageResource?.let { opened += it }
                 val packagePath = localPackage ?: packageResource!!.path.toAbsolutePath()
                 val context = RunContext(
                     os = operatingSystem,
@@ -71,29 +73,24 @@ class Run(
                     packageDir = packagePath.toRealPath().parent ?: error("run.js must have a parent directory")
                 )
                 verifyRunPackage(context.packageDir)
-                val opened = ConcurrentLinkedQueue<ResolvedURL>()
                 val sources = ComposeSources()
                 val composer = Composer(cache, quarantinesResults(!resolverOptions.noGatekeeper), minimumFreeSpace, windows)
-                try {
-                    val compose = { operations: List<ComposeOperation> ->
-                        val (key, composed) = composer.compose(operations, sources::get)
-                        opened += composed
-                        sources.add(composed.path, ComposeSource(composer.identityOf(key), composed.path, composed.path))
-                        composed.path
-                    }
-                    val plan = evaluateRunJavaScript(packagePath, context, compose) { url ->
-                        val (resolved, effectiveURI) = resolveRunURLWithEffectiveURI(resolver, parseURL(url), windows)
-                        opened += resolved
-                        val path = resolved.path.toAbsolutePath()
-                        sources.add(path, ComposeSource(sourceIdentity(effectiveURI, resolved), path, resolved.entryDirectory))
-                        path
-                    }
-                    runResolvedPath(launchExecutable(plan.executable, windows), plan.arguments, environment)
-                } finally {
-                    opened.forEach(ResolvedURL::close)
+                val compose = { operations: List<ComposeOperation> ->
+                    val (key, composed) = composer.compose(operations, sources::get)
+                    opened += composed
+                    sources.add(composed.path, ComposeSource(composer.identityOf(key), composed.path, composed.path))
+                    composed.path
                 }
+                val plan = evaluateRunJavaScript(packagePath, context, compose) { url ->
+                    val (resolved, effectiveURI) = resolveRunURLWithEffectiveURI(resolver, parseURL(url), windows)
+                    opened += resolved
+                    val path = resolved.path.toAbsolutePath()
+                    sources.add(path, ComposeSource(sourceIdentity(effectiveURI, resolved), path, resolved.entryDirectory))
+                    path
+                }
+                runResolvedPath(launchExecutable(plan.executable, windows), plan.arguments, environment)
             } finally {
-                packageResource?.close()
+                opened.forEach(ResolvedURL::close)
             }
         }
     }
@@ -154,11 +151,7 @@ internal fun runTargetURI(uri: URI): URI {
     return URI(base + (if (base.endsWith('/')) "" else "/") + suffix + tail)
 }
 
-/** On Windows, executable URL paths may omit the conventional .exe suffix. */
-internal fun resolveRunURL(resolver: URLResolver, uri: URI, windows: Boolean): ResolvedURL =
-    resolveRunURLWithEffectiveURI(resolver, uri, windows).first
-
-/** Like [resolveRunURL], also returning the URL that was resolved after any `.exe` fallback. */
+/** On Windows, tries an `.exe` suffix after a missing executable URL and returns the effective URL. */
 internal fun resolveRunURLWithEffectiveURI(resolver: URLResolver, uri: URI, windows: Boolean): Pair<ResolvedURL, URI> {
     try {
         return resolver.resolve(uri) to uri
@@ -180,24 +173,6 @@ internal fun sourceIdentity(effectiveURI: URI, resolved: ResolvedURL): String? {
     if (effectiveURI.rawFragment?.startsWith("sha256=") == true)
         return "URL: $url"
     return resolved.contentRevision?.let { "URL: $url\nRevision: $it" }
-}
-
-/** Paths returned to run.js that may be used as composition sources during one evaluation. */
-internal class ComposeSources {
-    private val sources = HashMap<String, ComposeSource?>()
-
-    @Synchronized
-    fun add(path: Path, source: ComposeSource) {
-        val key = path.toAbsolutePath().normalize().toString()
-        // One path reached through sources with different identities has no single identity, so it cannot be used.
-        if (key in sources && sources[key]?.identity != source.identity)
-            sources[key] = source.copy(identity = null)
-        else
-            sources[key] = source
-    }
-
-    @Synchronized
-    fun get(path: String): ComposeSource? = sources[path]
 }
 
 /**

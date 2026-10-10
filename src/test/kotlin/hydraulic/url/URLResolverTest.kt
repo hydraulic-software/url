@@ -1889,12 +1889,12 @@ class URLResolverTest {
 
         makeCache().use { cache ->
             val resolver = URLResolver(cache)
-            resolveRunURL(resolver, server.uri("/tool.zip/tool-1.0/bin/tool"), windows = true).use { resolved ->
+            resolveRunURLWithEffectiveURI(resolver, server.uri("/tool.zip/tool-1.0/bin/tool"), windows = true).first.use { resolved ->
                 assertEquals("tool.exe", resolved.path.fileName.toString())
                 assertEquals("windows executable", resolved.path.readText())
             }
             assertFailsWith<IllegalArgumentException> {
-                resolveRunURL(resolver, server.uri("/tool.zip/tool-1.0/bin/tool"), windows = false)
+                resolveRunURLWithEffectiveURI(resolver, server.uri("/tool.zip/tool-1.0/bin/tool"), windows = false).first
             }
         }
     }
