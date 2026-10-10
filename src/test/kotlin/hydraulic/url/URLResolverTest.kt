@@ -65,7 +65,7 @@ class URLResolverTest {
 
     @Test
     fun `default cache directory uses the application namespace`() {
-        assertEquals(OperatingSystemPaths.current("dev.hydraulic", "url-tool").localCache, URL().cacheDirectory)
+        assertEquals(OperatingSystemPaths.current("dev.hydraulic", "url-tool").localCache, URL().resolverOptions.cacheDirectory)
     }
 
     @Test
@@ -99,9 +99,9 @@ class URLResolverTest {
         val output = ByteArrayOutputStream()
         val command = URL(stdout = PrintStream(output), environment = emptyMap()).apply {
             urls = listOf("jdk=${server.uri("/jdk")}", "jar=${server.uri("/jar")}")
-            cacheDirectory = (tempDir / "assignment-cache").createDirectories()
-            progress = "never"
-            downloadPolicy = DownloadPolicy().apply { minimumFreeSpaceMB = 0 }
+            resolverOptions.cacheDirectory = (tempDir / "assignment-cache").createDirectories()
+            resolverOptions.progress = "never"
+            resolverOptions.downloadPolicy = DownloadPolicy().apply { minimumFreeSpaceMB = 0 }
         }
 
         assertEquals(0, command.call())
@@ -2053,11 +2053,11 @@ class URLResolverTest {
     fun `refresh has short and long command line forms`() {
         val url = URL()
         CommandLine(url).parseArgs("-r", "https://example.com")
-        assertTrue(url.refresh)
+        assertTrue(url.resolverOptions.refresh)
 
         val run = Run(executablePath = { tempDir / "run" }, windows = false)
         CommandLine(run).setStopAtPositional(true).parseArgs("--refresh", "https://example.com")
-        assertTrue(run.refresh)
+        assertTrue(run.resolverOptions.refresh)
     }
 
     @Test

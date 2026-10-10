@@ -1,8 +1,6 @@
 package hydraulic.url
 
-import hydraulic.diskcache.LocalDiskCache
 import hydraulic.diskcache.http.HttpStatusException
-import hydraulic.utils.os.OperatingSystemPaths
 import org.graalvm.nativeimage.ImageInfo
 import org.graalvm.nativeimage.ProcessProperties
 import picocli.CommandLine.Command
@@ -40,28 +38,8 @@ class Run(
     @Option(names = ["--install"], description = ["Install the sibling url hard link and zsh integration."])
     var install: Boolean = false
 
-    @Option(names = ["--cache-dir"], description = ["Shared cache directory."])
-    var cacheDirectory: Path = OperatingSystemPaths.current("dev.hydraulic", "url-tool").localCache
-
-    @Option(names = ["-r", "--refresh"], description = ["Ignore any cached HTTP response and download the resource again."])
-    var refresh: Boolean = false
-
-    @Option(names = ["--no-gatekeeper"], description = ["Do not quarantine downloaded and extracted files for macOS Gatekeeper, and remove quarantine from cached files."])
-    var noGatekeeper: Boolean = false
-
-    @Option(
-        names = ["--progress"],
-        paramLabel = "MODE",
-        defaultValue = "term",
-        description = ["Write progress indicators to stderr: bar, term, never, plain, or json."]
-    )
-    lateinit var progress: String
-
-    @Option(names = ["--verbose"], description = ["Print detailed failure diagnostics, including stack traces."])
-    var verbose: Boolean = verboseErrors(environment)
-
     @Mixin
-    lateinit var downloadPolicy: DownloadPolicy
+    var resolverOptions: ResolverOptions = ResolverOptions(environment)
 
     override fun call(): Int {
         if (install) {
@@ -77,59 +55,46 @@ class Run(
 
         val target = parseRunTarget(requireNotNull(url) { "A URL or local directory is required" })
         val localPackage = localRunPackage(target.locator)
-        val tracker = progressTracker(progress, System.err, environment, ::isStderrInteractive)
-        val minimumFreeSpace = downloadPolicy.minimumFreeSpaceBytes(environment)
-        val cacheConfiguration = downloadPolicy.cacheConfiguration()
-        try {
-            preparePrivateCacheDirectory(cacheDirectory)
-            LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
-                val transport = MinimumFreeSpaceHttpTransport(
-                    UserAgentHttpTransport(),
-                    minimumFreeSpace,
-                    usableSpace = { Files.getFileStore(cacheDirectory).usableSpace }
+        return resolverOptions.withResolver { cache, resolver, _ ->
+            val minimumFreeSpace = resolverOptions.downloadPolicy.minimumFreeSpaceBytes(environment)
+            val packageResource = if (localPackage == null)
+                resolver.resolve(runTargetURI(parseURL(target.locator)))
+            else
+                null
+            try {
+                val packagePath = localPackage ?: packageResource!!.path.toAbsolutePath()
+                val context = RunContext(
+                    os = operatingSystem,
+                    arch = architecture,
+                    ver = target.version,
+                    args = arguments,
+                    packageDir = packagePath.toRealPath().parent ?: error("run.js must have a parent directory")
                 )
-                val resolver = URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh, transport = transport, minimumFreeSpaceBytes = minimumFreeSpace)
-                val packageResource = if (localPackage == null)
-                    resolver.resolve(runTargetURI(parseURL(target.locator)))
-                else
-                    null
+                verifyRunPackage(context.packageDir)
+                val opened = ConcurrentLinkedQueue<ResolvedURL>()
+                val sources = ComposeSources()
+                val composer = Composer(cache, quarantinesResults(!resolverOptions.noGatekeeper), minimumFreeSpace, windows)
                 try {
-                    val packagePath = localPackage ?: packageResource!!.path.toAbsolutePath()
-                    val context = RunContext(
-                        os = operatingSystem,
-                        arch = architecture,
-                        ver = target.version,
-                        args = arguments,
-                        packageDir = packagePath.toRealPath().parent ?: error("run.js must have a parent directory")
-                    )
-                    verifyRunPackage(context.packageDir)
-                    val opened = ConcurrentLinkedQueue<ResolvedURL>()
-                    val sources = ComposeSources()
-                    val composer = Composer(cache, quarantinesResults(!noGatekeeper), minimumFreeSpace, windows)
-                    try {
-                        val compose = { operations: List<ComposeOperation> ->
-                            val (key, composed) = composer.compose(operations, sources::get)
-                            opened += composed
-                            sources.add(composed.path, ComposeSource(composer.identityOf(key), composed.path, composed.path))
-                            composed.path
-                        }
-                        val plan = evaluateRunJavaScript(packagePath, context, compose) { url ->
-                            val (resolved, effectiveURI) = resolveRunURLWithEffectiveURI(resolver, parseURL(url), windows)
-                            opened += resolved
-                            val path = resolved.path.toAbsolutePath()
-                            sources.add(path, ComposeSource(sourceIdentity(effectiveURI, resolved), path, resolved.entryDirectory))
-                            path
-                        }
-                        return runResolvedPath(launchExecutable(plan.executable, windows), plan.arguments, environment)
-                    } finally {
-                        opened.forEach(ResolvedURL::close)
+                    val compose = { operations: List<ComposeOperation> ->
+                        val (key, composed) = composer.compose(operations, sources::get)
+                        opened += composed
+                        sources.add(composed.path, ComposeSource(composer.identityOf(key), composed.path, composed.path))
+                        composed.path
                     }
+                    val plan = evaluateRunJavaScript(packagePath, context, compose) { url ->
+                        val (resolved, effectiveURI) = resolveRunURLWithEffectiveURI(resolver, parseURL(url), windows)
+                        opened += resolved
+                        val path = resolved.path.toAbsolutePath()
+                        sources.add(path, ComposeSource(sourceIdentity(effectiveURI, resolved), path, resolved.entryDirectory))
+                        path
+                    }
+                    runResolvedPath(launchExecutable(plan.executable, windows), plan.arguments, environment)
                 } finally {
-                    packageResource?.close()
+                    opened.forEach(ResolvedURL::close)
                 }
+            } finally {
+                packageResource?.close()
             }
-        } finally {
-            (tracker as? AutoCloseable)?.close()
         }
     }
 }

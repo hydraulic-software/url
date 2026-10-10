@@ -51,6 +51,9 @@ class URLResolver private constructor(
         minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_MB * 1_000_000
     ) : this(cache, progressTracker, gatekeeper, transport, refresh, retryDamagedCacheEntry = true, minimumFreeSpaceBytes = minimumFreeSpaceBytes)
 
+    internal fun withProgressTracker(tracker: ProgressReport.Tracker?): URLResolver =
+        URLResolver(baseCache, tracker, gatekeeper, transport, refresh, retryDamagedCacheEntry, minimumFreeSpaceBytes)
+
     // A non-HTTP aware cache that maps strings to unique directories, tracking their sizes and deleting them
     // when they get too large.
     private val baseCache: DiskCache = cache

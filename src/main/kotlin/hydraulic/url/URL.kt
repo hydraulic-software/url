@@ -7,8 +7,6 @@ import dev.progress4j.utils.OscProgressBarTracker
 import dev.progress4j.utils.ProgressPacer
 import dev.progress4j.utils.ProgressPrinter
 import dev.progress4j.utils.ProgressStreamCombiner
-import hydraulic.diskcache.LocalDiskCache
-import hydraulic.utils.os.OperatingSystemPaths
 import picocli.CommandLine
 import picocli.CommandLine.Command
 import picocli.CommandLine.Mixin
@@ -51,17 +49,11 @@ class URL(
     )
     var urls: List<String> = emptyList()
 
-    @Option(names = ["--cache-dir"], description = ["Shared cache directory."])
-    var cacheDirectory: Path = OperatingSystemPaths.current("dev.hydraulic", "url-tool").localCache
-
     @Option(
         names = ["--cache-key-url"],
         description = ["Use this URL as the cache identity while requesting URL exactly as supplied."]
     )
     var cacheKeyURL: String? = null
-
-    @Option(names = ["-r", "--refresh"], description = ["Ignore any cached HTTP response and download the resource again."])
-    var refresh: Boolean = false
 
     @Option(names = ["--print0"], description = ["Terminate the returned path with a NUL byte instead of a newline."])
     var print0: Boolean = false
@@ -69,22 +61,8 @@ class URL(
     @Option(names = ["--print-separator"], paramLabel = "CHAR", description = ["Terminate each returned path with this character."])
     var printSeparator: String? = null
 
-    @Option(names = ["--no-gatekeeper"], description = ["Do not quarantine downloaded and extracted files for macOS Gatekeeper, and remove quarantine from cached files."])
-    var noGatekeeper: Boolean = false
-
-    @Option(
-        names = ["--progress"],
-        paramLabel = "MODE",
-        defaultValue = "term",
-        description = ["Write progress indicators to stderr: bar (animated unicode progress bar), term (OSC escapes for terminal emulator rendered bars), never, plain, or json (default: ${'$'}{DEFAULT-VALUE}). If stderr isn't a terminal then bar/term have no effect."]
-    )
-    lateinit var progress: String
-
-    @Option(names = ["--verbose"], description = ["Print detailed failure diagnostics, including stack traces."])
-    var verbose: Boolean = verboseErrors(environment)
-
     @Mixin
-    lateinit var downloadPolicy: DownloadPolicy
+    var resolverOptions: ResolverOptions = ResolverOptions(environment)
 
     override fun call(): Int {
         require(printSeparator == null || printSeparator!!.length == 1) { "--print-separator requires exactly one character" }
@@ -99,55 +77,35 @@ class URL(
         require(!assignmentMode || (!print0 && printSeparator == null)) {
             "Variable assignments cannot be combined with --print0 or --print-separator"
         }
-        val progressTracker = progressTracker(progress, System.err, environment, ::isStderrInteractive)
         val separator = when {
             print0 -> '\u0000'
             printSeparator != null -> printSeparator!![0]
             else -> '\n'
         }
-        val minimumFreeSpace = downloadPolicy.minimumFreeSpaceBytes(environment)
-        val cacheConfiguration = downloadPolicy.cacheConfiguration()
-        try {
-            preparePrivateCacheDirectory(cacheDirectory)
-            LocalDiskCache(cacheDirectory, cacheConfiguration).open().use { cache ->
-                val transport = MinimumFreeSpaceHttpTransport(
-                    UserAgentHttpTransport(),
-                    minimumFreeSpace,
-                    usableSpace = { Files.getFileStore(cacheDirectory).usableSpace }
-                )
-                val parallelProgress = ParallelURLProgress(inputs.map(URLInput::url), progressTracker)
-                val paths = parallelMapOrdered(inputs) { index, input ->
-                    val uri = parseURL(input.url)
-                    try {
-                        URLResolver(
-                            cache,
-                            parallelProgress.tracker(index),
-                            gatekeeper = !noGatekeeper,
-                            refresh = refresh,
-                            transport = transport,
-                            minimumFreeSpaceBytes = minimumFreeSpace
-                        )
-                            .resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri)
-                            .use { it.path.toAbsolutePath() }
-                    } finally {
-                        parallelProgress.complete(index)
-                    }
-                }
-                // Keep stdout machine-readable and deterministic: diagnostics and
-                // progress use stderr, and results retain input order even when a
-                // later download finishes first.
-                for ((input, path) in inputs.zip(paths)) {
-                    if (assignmentMode) {
-                        stdout.print(posixShellAssignment(input.variable!!, path.toString()))
-                        stdout.print('\n')
-                    } else {
-                        stdout.print(path)
-                        stdout.print(separator)
-                    }
+        resolverOptions.withResolver { _, resolver, progressTracker ->
+            val parallelProgress = ParallelURLProgress(inputs.map(URLInput::url), progressTracker)
+            val paths = parallelMapOrdered(inputs) { index, input ->
+                val uri = parseURL(input.url)
+                try {
+                    resolver.withProgressTracker(parallelProgress.tracker(index))
+                        .resolve(uri, cacheKeyURL?.let(::parseURL) ?: uri)
+                        .use { it.path.toAbsolutePath() }
+                } finally {
+                    parallelProgress.complete(index)
                 }
             }
-        } finally {
-            (progressTracker as? AutoCloseable)?.close()
+            // Keep stdout machine-readable and deterministic: diagnostics and
+            // progress use stderr, and results retain input order even when a
+            // later download finishes first.
+            for ((input, path) in inputs.zip(paths)) {
+                if (assignmentMode) {
+                    stdout.print(posixShellAssignment(input.variable!!, path.toString()))
+                    stdout.print('\n')
+                } else {
+                    stdout.print(path)
+                    stdout.print(separator)
+                }
+            }
         }
         return 0
     }
@@ -358,11 +316,8 @@ internal fun commandLine(invocationName: String = "url", environment: Map<String
         .setExecutionExceptionHandler { exception, commandLine, _ ->
             val message = exception.message ?: exception.javaClass.simpleName
             commandLine.err.println("${commandLine.commandName}: $message")
-            val verbose = when (val userObject = commandLine.commandSpec.userObject()) {
-                is Run -> userObject.verbose
-                is URL -> userObject.verbose
-                else -> false
-            }
+            val options = commandLine.commandSpec.mixins()["resolverOptions"]?.userObject() as? ResolverOptions
+            val verbose = options?.verbose == true
             if (verbose)
                 exception.printStackTrace(commandLine.err)
             commandLine.commandSpec.exitCodeOnExecutionException()
