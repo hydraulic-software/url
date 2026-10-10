@@ -38,6 +38,25 @@ class RunTest : URLTestSupport() {
     }
 
     @Test
+    fun `semantics selection uses UTC timestamps and only allows forward opt ins`() {
+        val early = SemanticsRevision(java.time.LocalDate.parse("2020-01-01"))
+        val later = SemanticsRevision(java.time.LocalDate.parse("2022-01-01"))
+        val revisions = listOf(early, later)
+        val today = java.time.LocalDate.parse("2021-06-01")
+        fun select(timestamp: String?, declared: String? = null) = selectRevision(
+            timestamp?.let(java.time.Instant::parse), declared?.let(java.time.LocalDate::parse), today, revisions)
+        assertEquals(early, select(null))
+        assertEquals(early, select("2010-01-01T00:00:00Z"))
+        assertEquals(early, select("2021-12-31T23:59:59Z"))
+        assertEquals(later, select("2022-01-01T00:00:00Z"))
+        assertEquals(later, select(null, "2022-01-01"))
+        assertEquals(later, select(null, "2030-01-01"))
+        assertEquals(later, select("2023-01-01T00:00:00Z", "2020-01-01"))
+        assertEquals(early, select(null, "1900-01-01"))
+        assertEquals(null, verifyRunPackage(tempDir))
+    }
+
+    @Test
     fun `permissions distinguish unrestricted from empty and retain unknown keys`() {
         assertEquals(null, permissionsPlan(null).permissions)
         assertNotNull(permissionsPlan("{}").permissions)

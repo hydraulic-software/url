@@ -23,15 +23,16 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import java.util.Date
+import java.time.Instant
 
 private const val TIMESTAMP_FILE = "timestamp.tsr"
 private const val TIMESTAMPING_EKU = "1.3.6.1.5.5.7.3.8"
 
 /** Verifies the optional timestamp in a run package before its JavaScript runs. */
-internal fun verifyRunPackage(packageDir: Path) {
+internal fun verifyRunPackage(packageDir: Path): Instant? {
     val timestamp = packageDir.resolve(TIMESTAMP_FILE)
     if (!Files.exists(timestamp, LinkOption.NOFOLLOW_LINKS))
-        return
+        return null
 
     val attributes = Files.readAttributes(timestamp, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
     require(attributes.isRegularFile && !attributes.isSymbolicLink()) {
@@ -39,7 +40,7 @@ internal fun verifyRunPackage(packageDir: Path) {
     }
 
     val manifest = canonicalRunManifest(packageDir)
-    verifyTimestamp(Files.readAllBytes(timestamp), manifest)
+    return verifyTimestamp(Files.readAllBytes(timestamp), manifest)
 }
 
 /** Builds the byte representation covered by a run package's RFC 3161 token. */
@@ -84,7 +85,7 @@ internal fun canonicalRunManifest(packageDir: Path): ByteArray {
     }.toByteArray(Charsets.UTF_8)
 }
 
-private fun verifyTimestamp(responseBytes: ByteArray, manifest: ByteArray) {
+private fun verifyTimestamp(responseBytes: ByteArray, manifest: ByteArray): Instant {
     val response = try {
         TimeStampResponse(responseBytes)
     } catch (e: Exception) {
@@ -119,6 +120,7 @@ private fun verifyTimestamp(responseBytes: ByteArray, manifest: ByteArray) {
     signerCertificate.checkValidity(Date(info.genTime.time))
     token.validate(JcaSimpleSignerInfoVerifierBuilder().build(signer))
     validateTimestampSigner(signedData, signerCertificate, info.genTime)
+    return info.genTime.toInstant()
 }
 
 private fun validateTimestampSigner(signedData: CMSSignedData, signer: X509Certificate, timestamp: Date) {
