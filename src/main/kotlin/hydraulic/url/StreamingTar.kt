@@ -12,14 +12,13 @@ import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
-import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFileAttributeView
 import kotlin.io.path.createDirectories
 import kotlin.io.path.isSymbolicLink
 
 /** Extracts a tar stream without materializing the compressed archive on disk. */
-internal fun extractStreamingTar(input: InputStream, destination: Path, minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_MB * 1_000_000,
+internal fun extractStreamingTar(input: InputStream, destination: Path, minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_BYTES,
     usableSpace: () -> Long = { Files.getFileStore(destination).usableSpace }) {
     preparePrivateCacheDirectory(destination)
     val root = destination.toRealPath()
@@ -50,7 +49,7 @@ internal fun extractStreamingTar(input: InputStream, destination: Path, minimumF
 }
 
 /** ZIP extraction uses the central directory; TAR uses the same bounded streaming implementation. */
-internal fun extractSafeLocalArchive(archive: Path, destination: Path, minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_MB * 1_000_000,
+internal fun extractSafeLocalArchive(archive: Path, destination: Path, minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_BYTES,
     usableSpace: () -> Long = { Files.getFileStore(destination).usableSpace }) {
     val signature = Files.newInputStream(archive).use { it.readNBytes(4) }
     if (signature.size < 2 || signature[0] != 'P'.code.toByte() || signature[1] != 'K'.code.toByte()) {
@@ -137,13 +136,7 @@ private fun extractTarEntry(input: InputStream, entry: TarArchiveEntry, state: S
         return
     }
     val target = state.prepareFile(logicalTarget, entry.name)
-    Files.newOutputStream(
-        target,
-        StandardOpenOption.CREATE,
-        StandardOpenOption.TRUNCATE_EXISTING,
-        StandardOpenOption.WRITE,
-        LinkOption.NOFOLLOW_LINKS
-    ).use { output -> space.copy(input, output) }
+    space.copyTo(input, target)
     applyTarMode(target, entry.mode)
 }
 

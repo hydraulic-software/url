@@ -12,6 +12,7 @@ import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermissions
 
 internal const val DEFAULT_MINIMUM_FREE_SPACE_MB = 100L
+internal const val DEFAULT_MINIMUM_FREE_SPACE_BYTES = DEFAULT_MINIMUM_FREE_SPACE_MB * 1_000_000
 internal const val MINIMUM_FREE_SPACE_ENV = "URL_MIN_FREE_SPACE_MB"
 
 class DownloadPolicy {
@@ -68,16 +69,17 @@ class DownloadPolicy {
 /** Checks space as bodies are consumed; cached responses and HTTP 304s remain usable. */
 internal class MinimumFreeSpaceHttpTransport(
     private val delegate: HttpTransport,
-    private val minimumBytes: Long,
-    private val usableSpace: () -> Long
+    private val space: DiskSpaceGuard
 ) : HttpTransport {
+    constructor(delegate: HttpTransport, minimumBytes: Long, usableSpace: () -> Long) :
+        this(delegate, DiskSpaceGuard(minimumBytes, usableSpace))
     override fun get(uri: URI, headers: Map<String, String>): HttpTransport.Response {
         val response = delegate.get(uri, headers)
         if (response.statusCode !in 200..299)
             return response
         try {
-            if (minimumBytes > 0) checkFreeSpace(minimumBytes, usableSpace(), 0)
-            return response.copy(body = SpaceCheckedBody(response.body, minimumBytes, usableSpace))
+            space.check()
+            return response.copy(body = SpaceCheckedBody(response.body, space))
         } catch (e: Exception) {
             response.body.close()
             throw e
@@ -87,8 +89,7 @@ internal class MinimumFreeSpaceHttpTransport(
 
 private class SpaceCheckedBody(
     input: InputStream,
-    private val minimumBytes: Long,
-    private val usableSpace: () -> Long
+    private val space: DiskSpaceGuard
 ) : FilterInputStream(input) {
     override fun read(): Int {
         val bytes = ByteArray(1)
@@ -98,10 +99,10 @@ private class SpaceCheckedBody(
     override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
         java.util.Objects.checkFromIndexSize(offset, length, bytes.size)
         if (length == 0) return 0
-        if (minimumBytes > 0) checkFreeSpace(minimumBytes, usableSpace(), 0)
+        space.check()
         val count = `in`.read(bytes, offset, minOf(length, 64 * 1024))
         if (count > 0) {
-            if (minimumBytes > 0) checkFreeSpace(minimumBytes, usableSpace(), count.toLong())
+            space.check(count.toLong())
         }
         return count
     }

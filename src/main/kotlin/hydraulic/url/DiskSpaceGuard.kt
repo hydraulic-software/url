@@ -4,6 +4,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.LinkOption
+import java.nio.file.StandardOpenOption
 
 /** Checks the destination's current space before each entry and each chunk written. */
 internal class DiskSpaceGuard(
@@ -19,6 +21,11 @@ internal class DiskSpaceGuard(
     fun check(pendingWrite: Long = 0) {
         if (minimumBytes > 0)
             checkFreeSpace(minimumBytes, usableSpace(), pendingWrite)
+    }
+
+    fun copyTo(input: InputStream, path: Path) {
+        Files.newOutputStream(path, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).use { output -> copy(input, output) }
     }
 
     fun copy(input: InputStream, output: OutputStream) {

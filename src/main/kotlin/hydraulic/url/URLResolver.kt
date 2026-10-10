@@ -15,7 +15,6 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
 import java.security.DigestInputStream
@@ -48,7 +47,7 @@ class URLResolver private constructor(
         gatekeeper: Boolean = true,
         transport: HttpTransport = UserAgentHttpTransport(),
         refresh: Boolean = false,
-        minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_MB * 1_000_000
+        minimumFreeSpaceBytes: Long = DEFAULT_MINIMUM_FREE_SPACE_BYTES
     ) : this(cache, progressTracker, gatekeeper, transport, refresh, retryDamagedCacheEntry = true, minimumFreeSpaceBytes = minimumFreeSpaceBytes)
 
     internal fun withProgressTracker(tracker: ProgressReport.Tracker?): URLResolver =
@@ -75,8 +74,7 @@ class URLResolver private constructor(
                             paths.filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }
                                 .mapToLong { Files.size(it) }.sum()
                         }
-                        checkFreeSpace(minimumFreeSpaceBytes,
-                            Files.getFileStore(previous.directory).usableSpace, bytes)
+                        DiskSpaceGuard(minimumFreeSpaceBytes, previous.directory).check(bytes)
                     }
                 }
                 response
@@ -405,9 +403,7 @@ class URLResolver private constructor(
                     Files.createDirectories(target)
                 } else if (regular) {
                     Files.newInputStream(path).use { input ->
-                        Files.newOutputStream(target, StandardOpenOption.CREATE,
-                            StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE,
-                            LinkOption.NOFOLLOW_LINKS).use { output -> space.copy(input, output) }
+                        space.copyTo(input, target)
                     }
                     if (Files.getFileAttributeView(path, PosixFileAttributeView::class.java) != null)
                         Files.setPosixFilePermissions(target, Files.getPosixFilePermissions(path) - setOf(

@@ -39,8 +39,7 @@ class ResolverOptions(private val environment: Map<String, String> = System.gete
             val minimumBytes = downloadPolicy.minimumFreeSpaceBytes(environment)
             preparePrivateCacheDirectory(cacheDirectory)
             return LocalDiskCache(cacheDirectory, downloadPolicy.cacheConfiguration()).open().use { cache ->
-                val transport = MinimumFreeSpaceHttpTransport(UserAgentHttpTransport(), minimumBytes,
-                    usableSpace = { java.nio.file.Files.getFileStore(cacheDirectory).usableSpace })
+                val transport = MinimumFreeSpaceHttpTransport(UserAgentHttpTransport(), DiskSpaceGuard(minimumBytes, cacheDirectory))
                 val resolver = URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh,
                     transport = transport, minimumFreeSpaceBytes = minimumBytes)
                 action(cache, resolver, tracker)
