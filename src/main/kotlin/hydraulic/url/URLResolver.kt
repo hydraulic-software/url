@@ -83,7 +83,7 @@ class URLResolver private constructor(
             }
         }
         return HttpResourceCache(
-            if (refresh || hashLocked) MetadataFreeLookupCache(completeCache) else completeCache,
+            ContentRevisionCache(if (refresh || hashLocked) MetadataFreeLookupCache(completeCache) else completeCache),
             transport = guardedTransport,
             progressTracker = progressTracker
         ).resolve(uri, cacheIdentity)
@@ -201,6 +201,9 @@ class URLResolver private constructor(
         val policy = file.hashbangCachePolicy()
         if (policy != null && metadata[HTTP_CACHE_CONTROL_METADATA] != policy)
             metadata = metadata + (HTTP_CACHE_CONTROL_METADATA to policy)
+        // Entries cached before revisions were recorded get one now; it identifies the body this entry holds.
+        if (CONTENT_REVISION_METADATA !in metadata)
+            metadata = metadata + (CONTENT_REVISION_METADATA to newContentRevision())
         val finalEntry = if (metadata == entry.metadata) {
             entry
         } else {
@@ -240,8 +243,30 @@ class URLResolver private constructor(
         oldDirectory: Path,
         metadata: Map<String, String>
     ): DiskCache.OpenedEntry = completeCache.getAndCustomizeEntry(key, rerun = true) { destination ->
-        copyDirectory(oldDirectory, destination)
+        // The old entry is discarded once this one is published, so its files can be shared rather than copied.
+        linkDirectory(oldDirectory, destination)
         DiskCache.EntryComputationResult(metadata = metadata)
+    }
+
+    private fun linkDirectory(source: Path, destination: Path) {
+        preparePrivateCacheDirectory(destination)
+        Files.walk(source).use { paths ->
+            for (path in paths) {
+                val target = destination.resolve(source.relativize(path))
+                when {
+                    path == source -> Unit
+                    Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS) -> Files.createDirectories(target)
+                    Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) -> try {
+                        Files.createLink(target, path)
+                    } catch (_: IOException) {
+                        Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES)
+                    } catch (_: UnsupportedOperationException) {
+                        Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES)
+                    }
+                    else -> Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES, LinkOption.NOFOLLOW_LINKS)
+                }
+            }
+        }
     }
 
     private fun resolveArchive(
@@ -263,9 +288,11 @@ class URLResolver private constructor(
                     resolveStreamedArchive(archive, identityArchive, expectedArchiveHash),
                     expectedArchiveHash
                 )
-            val downloaded: ResolvedURL = resolveHttpResource(archive.archiveURI, identityArchive.archiveURI).asSingleFile()
+            val key = HttpResourceCache.cacheKey(identityArchive.archiveURI)
+            val downloaded: ResolvedURL = resolveHttpResource(archive.archiveURI, identityArchive.archiveURI)
+                .withContentRevision(key).asSingleFile()
             downloaded.use { downloaded ->
-                return Resolution(resolveExtractedArchive(archive, downloaded.path))
+                return Resolution(resolveExtractedArchive(archive, downloaded.path, revision = downloaded.contentRevision))
             }
         }
         val downloaded = resolveArchiveSource(archive, identityArchive, expectedArchiveHash)
@@ -278,7 +305,7 @@ class URLResolver private constructor(
                 }
             }
             return Resolution(
-                resolveExtractedArchive(archive, downloaded.resource.path, expectedArchiveHash),
+                resolveExtractedArchive(archive, downloaded.resource.path, expectedArchiveHash, downloaded.resource.contentRevision),
                 expectedArchiveHash
             )
         } finally {
@@ -289,7 +316,8 @@ class URLResolver private constructor(
     private fun resolveExtractedArchive(
         archive: ArchiveURL,
         archiveFile: Path,
-        verifiedArchiveHash: String? = null
+        verifiedArchiveHash: String? = null,
+        revision: String? = null
     ): ResolvedURL {
         val extracted = completeCache.getAndCustomizeEntry(
             extractedArchiveCacheKey(archiveFile, quarantinesResults(gatekeeper), verifiedArchiveHash),
@@ -300,7 +328,8 @@ class URLResolver private constructor(
                 destination.quarantineTree()
             DiskCache.EntryComputationResult()
         }
-        return selectArchiveMember(archive, extracted)
+        // Extractions are shared by content, so the revision comes from the archive that was resolved.
+        return selectArchiveMember(archive, extracted, revision)
     }
 
     private fun resolveStreamedArchive(
@@ -318,7 +347,7 @@ class URLResolver private constructor(
         val cachedRepresentationIsFresh = expectedArchiveHash == null &&
             existing != null && streamedArchiveIsFresh(existing.metadata)
         if (!refresh && existing != null && (cachedHashMatches || cachedRepresentationIsFresh))
-            return selectArchiveMember(archive, existing)
+            return selectArchiveMember(archive, existing, existing.metadata[CONTENT_REVISION_METADATA])
         val previousMetadata = existing?.metadata.orEmpty()
         val previousDirectory = existing?.directory
         existing?.close()
@@ -361,7 +390,7 @@ class URLResolver private constructor(
                 metadata = streamedArchiveMetadata(response, previousMetadata, expectedArchiveHash)
             )
         }
-        return selectArchiveMember(archive, extracted)
+        return selectArchiveMember(archive, extracted, extracted.metadata[CONTENT_REVISION_METADATA])
     }
 
     /** Keeps the response stream available so a hash lock can consume its complete raw body. */
@@ -397,7 +426,7 @@ class URLResolver private constructor(
         }
     }
 
-    private fun selectArchiveMember(archive: ArchiveURL, extracted: DiskCache.OpenedEntry): ResolvedURL {
+    private fun selectArchiveMember(archive: ArchiveURL, extracted: DiskCache.OpenedEntry, revision: String?): ResolvedURL {
         val extractedRoot = try {
             extracted.directory.toRealPath()
         } catch (e: IOException) {
@@ -418,7 +447,7 @@ class URLResolver private constructor(
             extracted.close()
             throw IllegalArgumentException("Archive member escapes the archive root: ${archive.member.joinToString("/")}")
         }
-        return ResolvedURL(resolvedMember, extracted)
+        return ResolvedURL(resolvedMember, extracted, revision)
     }
 
     private fun resolveArchiveSource(
@@ -444,7 +473,17 @@ class URLResolver private constructor(
 
     private fun ArchiveURL.isRootRequest(uri: URI): Boolean = member.isEmpty() && uri.rawPath.endsWith('/')
 
-    private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(singleFile(), this)
+    private fun DiskCache.OpenedEntry.asSingleFile() = ResolvedURL(singleFile(), this, metadata[CONTENT_REVISION_METADATA])
+
+    /** Returns this HTTP entry, first recording a content revision if it was cached before revisions existed. */
+    private fun DiskCache.OpenedEntry.withContentRevision(key: String): DiskCache.OpenedEntry {
+        if (CONTENT_REVISION_METADATA in metadata)
+            return this
+        val oldDirectory = directory
+        val updated = metadata + (CONTENT_REVISION_METADATA to newContentRevision())
+        close()
+        return replaceCacheEntry(key, oldDirectory, updated)
+    }
 
     private fun DiskCache.OpenedEntry.singleFile(): Path {
         val files = try {
@@ -513,6 +552,19 @@ internal fun Path.sha256(): String {
     return HexFormat.of().formatHex(digest.digest())
 }
 
-class ResolvedURL(val path: Path, private val entry: DiskCache.OpenedEntry) : AutoCloseable {
+/**
+ * A resolved path and the lease on the cache entry containing it.
+ *
+ * [contentRevision] identifies the downloaded body that supplied the content: it changes whenever a new response body
+ * is accepted, and is kept by fresh cache hits and `304 Not Modified` responses.
+ */
+class ResolvedURL(
+    val path: Path,
+    private val entry: DiskCache.OpenedEntry,
+    internal val contentRevision: String? = null
+) : AutoCloseable {
+    /** The root of the leased cache entry, which contains [path]. */
+    internal val entryDirectory: Path get() = entry.directory
+
     override fun close() = entry.close()
 }

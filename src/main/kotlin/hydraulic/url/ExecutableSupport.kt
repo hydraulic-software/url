@@ -79,6 +79,18 @@ internal fun Path.quarantineTree() {
         MacOSQuarantine.applyTree(this)
 }
 
+/** Removes quarantine from every file and directory in a tree, for results built with Gatekeeper disabled. */
+internal fun Path.removeQuarantineTree() {
+    if (!IS_MAC_OS)
+        return
+    Files.walk(this).use { paths ->
+        for (path in paths) {
+            if (!Files.isSymbolicLink(path))
+                MacOSQuarantine.remove(path)
+        }
+    }
+}
+
 /** Whether results are quarantined, which changes the content of extracted archive cache entries. */
 internal fun quarantinesResults(gatekeeper: Boolean): Boolean = gatekeeper && IS_MAC_OS
 

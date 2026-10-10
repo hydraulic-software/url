@@ -152,6 +152,24 @@ shape. It may call `urls()` multiple times; calls complete in script order.
 The default export is the launch plan. On Windows, executable URLs may omit
 their final `.exe` suffix.
 
+`compose()` assembles a new cached directory from paths returned by `urls()` or
+earlier `compose()` calls. It takes an ordered array of copy operations
+(`{from, select, to, replace}`) and removal operations (`{remove}`), and returns
+the assembled directory's path:
+
+```js
+const {base, patch} = urls({base: "https://example.com/app.zip/", patch: "https://example.com/patch.zip/"});
+const app = compose([
+  {from: base, to: "."},
+  {remove: "plugins/legacy"},
+  {from: patch, select: "bin/tool", to: "bin/tool"},
+]);
+```
+
+The result is cached by its recipe and the identity of its sources, so it is
+rebuilt only when the recipe changes or an unlocked source is downloaded again.
+See [`SPEC-RUN.md`](SPEC-RUN.md) for the exact copy, path and symbolic link rules.
+
 Packages may import other JavaScript files from their own directory using
 relative ECMAScript module imports.
 

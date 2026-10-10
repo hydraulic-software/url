@@ -34,6 +34,7 @@ private data class UrlRequest(
 internal fun evaluateRunJavaScript(
     packageFile: Path,
     context: RunContext,
+    compose: (List<ComposeOperation>) -> Path = { throw UnsupportedOperationException("compose() is unavailable") },
     resolve: (Map<String, String>) -> Map<String, Path>
 ): LaunchPlan {
     val packagePath = packageFile.toRealPath()
@@ -58,6 +59,10 @@ internal fun evaluateRunJavaScript(
                 require(arguments.size == 1) { "run.js function urls() expects one object or array" }
                 val request = arguments[0]
                 resolveUrls(request, resolve)
+            })
+            bindings.putMember("compose", ProxyExecutable { arguments: Array<out Value> ->
+                require(arguments.size == 1) { "run.js function compose() expects one array of operations" }
+                compose(composeOperations(arguments[0])).toAbsolutePath().normalize().toString()
             })
 
             val source = Source.newBuilder("js", packagePath.toFile())
@@ -140,6 +145,50 @@ private fun resolveUrls(
         }
     })
 }
+
+/** Checks the shape of a compose() recipe. Path rules and source checks are applied by [Composer]. */
+private fun composeOperations(request: Value): List<ComposeOperation> {
+    require(request.hasArrayElements() && request.arraySize > 0) {
+        "run.js function compose() expects a non-empty array of operations"
+    }
+    return (0 until request.arraySize).map { index ->
+        val operation = request.getArrayElement(index)
+        val label = "compose() operation $index"
+        require(operation.hasMembers() && !operation.hasArrayElements() && !operation.canExecute()) {
+            "$label must be an object"
+        }
+        val keys = operation.memberKeys
+        fun string(name: String): String? {
+            if (name !in keys)
+                return null
+            val value = operation.getMember(name)
+            require(value.isString && value.asString().isNotEmpty()) { "$label property '$name' must be a non-empty string" }
+            return value.asString()
+        }
+        if ("remove" in keys) {
+            require(keys == setOf("remove")) { "$label must have only a 'remove' property, or be a copy operation" }
+            ComposeOperation.Remove(string("remove")!!)
+        } else {
+            val unknown = keys - COPY_PROPERTIES
+            require(unknown.isEmpty()) { "$label has unknown properties: ${unknown.sorted().joinToString()}" }
+            val replace = if ("replace" in keys) {
+                val value = operation.getMember("replace")
+                require(value.isBoolean) { "$label property 'replace' must be a boolean" }
+                value.asBoolean()
+            } else {
+                false
+            }
+            ComposeOperation.Copy(
+                from = requireNotNull(string("from")) { "$label requires a 'from' property" },
+                select = string("select") ?: ".",
+                to = requireNotNull(string("to")) { "$label requires a 'to' property" },
+                replace = replace
+            )
+        }
+    }
+}
+
+private val COPY_PROPERTIES = setOf("from", "select", "to", "replace")
 
 private fun packageFileSystem(packageDir: Path): FileSystem {
     val root = packageDir.toRealPath()

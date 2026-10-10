@@ -104,11 +104,22 @@ class Run(
                     )
                     verifyRunPackage(context.packageDir)
                     val opened = ConcurrentLinkedQueue<ResolvedURL>()
+                    val sources = ComposeSources()
+                    val composer = Composer(cache, quarantinesResults(!noGatekeeper), minimumFreeSpace, windows)
                     try {
-                        val plan = evaluateRunJavaScript(packagePath, context) { urls ->
+                        val compose = { operations: List<ComposeOperation> ->
+                            val (key, composed) = composer.compose(operations, sources::get)
+                            opened += composed
+                            sources.add(composed.path, ComposeSource(composer.identityOf(key), composed.path, composed.path))
+                            composed.path
+                        }
+                        val plan = evaluateRunJavaScript(packagePath, context, compose) { urls ->
                             parallelMapOrdered(urls.entries.toList()) { _, (name, value) ->
-                                resolveRunURL(resolver, parseURL(value), windows).also { opened += it }
-                                    .let { name to it.path.toAbsolutePath() }
+                                val (resolved, effectiveURI) = resolveRunURLWithEffectiveURI(resolver, parseURL(value), windows)
+                                opened += resolved
+                                val path = resolved.path.toAbsolutePath()
+                                sources.add(path, ComposeSource(sourceIdentity(effectiveURI, resolved), path, resolved.entryDirectory))
+                                name to path
                             }.toMap()
                         }
                         return runResolvedPath(plan.executable, plan.arguments, environment)
@@ -196,15 +207,49 @@ internal fun runTargetURI(uri: URI): URI {
 }
 
 /** On Windows, executable URL paths may omit the conventional .exe suffix. */
-internal fun resolveRunURL(resolver: URLResolver, uri: URI, windows: Boolean): ResolvedURL {
+internal fun resolveRunURL(resolver: URLResolver, uri: URI, windows: Boolean): ResolvedURL =
+    resolveRunURLWithEffectiveURI(resolver, uri, windows).first
+
+/** Like [resolveRunURL], also returning the URL that was resolved after any `.exe` fallback. */
+internal fun resolveRunURLWithEffectiveURI(resolver: URLResolver, uri: URI, windows: Boolean): Pair<ResolvedURL, URI> {
     try {
-        return resolver.resolve(uri)
+        return resolver.resolve(uri) to uri
     } catch (e: Exception) {
         if (!windows || uri.rawPath.endsWith(".exe", ignoreCase = true) ||
             e !is MissingArchiveMemberException && (e !is HttpStatusException || e.statusCode != 404))
             throw e
     }
-    return resolver.resolve(uri.withExecutableSuffix())
+    val fallback = uri.withExecutableSuffix()
+    return resolver.resolve(fallback) to fallback
+}
+
+/**
+ * A resolved URL's composition identity: a hash-locked URL identifies its content by itself, while an unlocked one also
+ * needs the revision of the body that was resolved. Returns null if an unlocked result has no revision.
+ */
+internal fun sourceIdentity(effectiveURI: URI, resolved: ResolvedURL): String? {
+    val url = effectiveURI.toASCIIString()
+    if (effectiveURI.rawFragment?.startsWith("sha256=") == true)
+        return "URL: $url"
+    return resolved.contentRevision?.let { "URL: $url\nRevision: $it" }
+}
+
+/** Paths returned to run.js that may be used as composition sources during one evaluation. */
+internal class ComposeSources {
+    private val sources = HashMap<String, ComposeSource?>()
+
+    @Synchronized
+    fun add(path: Path, source: ComposeSource) {
+        val key = path.toAbsolutePath().normalize().toString()
+        // One path reached through sources with different identities has no single identity, so it cannot be used.
+        if (key in sources && sources[key]?.identity != source.identity)
+            sources[key] = source.copy(identity = null)
+        else
+            sources[key] = source
+    }
+
+    @Synchronized
+    fun get(path: String): ComposeSource? = sources[path]
 }
 
 private fun URI.withExecutableSuffix(): URI {

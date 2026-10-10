@@ -16,3 +16,9 @@ declare function urls(requests: readonly string[]): readonly string[];
 declare function urls<T extends Record<string, UrlInput>>(
     requests: T
 ): Readonly<{ [K in keyof T]: UrlOutput<T[K]> }>;
+
+type ComposeCopy = Readonly<{ from: string; select?: string; to: string; replace?: boolean }>;
+type ComposeRemove = Readonly<{ remove: string }>;
+type ComposeOperation = ComposeCopy | ComposeRemove;
+
+declare function compose(operations: readonly [ComposeOperation, ...ComposeOperation[]]): string;

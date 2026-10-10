@@ -41,7 +41,7 @@ internal fun extractedArchiveCacheKey(archive: Path, quarantined: Boolean, conte
 """.trimIndent()
 
 internal fun streamedArchiveCacheKey(uri: URI, quarantined: Boolean): String =
-    "Streamed extracted archive\nLayout version: 4\nURI: $uri\nQuarantined: $quarantined"
+    "Streamed extracted archive\nLayout version: 5\nURI: $uri\nQuarantined: $quarantined"
 
 private fun URI.isRemoteTarball(): Boolean = ARCHIVE_SUFFIXES.filterNot { it == ".zip" }
     .any { path.endsWith(it, ignoreCase = true) }
@@ -72,6 +72,9 @@ internal fun streamedArchiveMetadata(
     replaceFromHeader("last-modified", STREAM_LAST_MODIFIED)
     replaceFromHeader("age", STREAM_AGE)
     verifiedArchiveHash?.let { put(STREAM_ARCHIVE_HASH, it) }
+    // A 304 inherited the previous body's revision above; a new body gets a new one.
+    if (CONTENT_REVISION_METADATA !in this)
+        put(CONTENT_REVISION_METADATA, newContentRevision())
 }
 
 internal fun streamedArchiveIsFresh(metadata: Map<String, String>): Boolean {

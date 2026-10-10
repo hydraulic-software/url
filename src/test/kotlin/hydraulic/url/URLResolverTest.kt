@@ -1324,7 +1324,7 @@ class URLResolverTest {
         val plan = evaluateRunJavaScript(
             packageFile,
             RunContext("windows", "x86_64", null, emptyList(), packageDir),
-            { emptyMap() }
+            resolve = { emptyMap() }
         )
 
         assertEquals(Path.of("powershell.exe"), plan.executable)
@@ -1751,7 +1751,7 @@ class URLResolverTest {
             evaluateRunJavaScript(
                 packageFile,
                 RunContext("freebsd", "x86_64", null, emptyList(), packageDir),
-                { emptyMap() }
+                resolve = { emptyMap() }
             )
         }
         assertContains(unsupportedOs.message.orEmpty(), "Unsupported GraalVM platform: freebsd-x64")
