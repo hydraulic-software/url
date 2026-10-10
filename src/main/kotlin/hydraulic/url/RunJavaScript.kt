@@ -1,5 +1,8 @@
 package hydraulic.url
 
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.graalvm.polyglot.Context
 import org.graalvm.polyglot.EnvironmentAccess
 import org.graalvm.polyglot.HostAccess
@@ -297,11 +300,8 @@ private fun urlsRequest(request: Value): UrlsRequest {
         "run.js function urls() expects an object or array"
     }
     if (request.hasArrayElements()) {
-        return UrlsRequest((0 until request.arraySize.toInt()).map { index ->
-            val value = request.getArrayElement(index.toLong())
-            require(value.isString) { "run.js URL at index $index must be a string" }
-            UrlRequest(null, value.asString())
-        }, null)
+        return UrlsRequest(request.stringArray { "run.js URL at index $it must be a string" }
+            .map { UrlRequest(null, it) }, null)
     }
     val names = ArrayList<Pair<String, Boolean>>()
     val requests = request.memberKeys.flatMap { name ->
@@ -313,11 +313,8 @@ private fun urlsRequest(request: Value): UrlsRequest {
             }
             value.hasArrayElements() -> {
                 names += name to true
-                (0 until value.arraySize.toInt()).map { index ->
-                    val item = value.getArrayElement(index.toLong())
-                    require(item.isString) { "run.js URL '$name[$index]' must be a string" }
-                    UrlRequest(name, item.asString())
-                }
+                value.stringArray { "run.js URL '$name[$it]' must be a string" }
+                    .map { UrlRequest(name, it) }
             }
             else -> throw IllegalArgumentException(
                 "run.js URL '$name' must be a string or an array of strings"
@@ -426,44 +423,25 @@ private fun launchPlan(value: Value, packageDir: Path): LaunchPlan {
     require(argumentsValue != null && argumentsValue.hasArrayElements()) {
         "run.js launch plan property 'arguments' must be an array of strings"
     }
-    val arguments = (0 until argumentsValue.arraySize.toInt()).map { index ->
-        val argument = argumentsValue.getArrayElement(index.toLong())
-        require(argument.isString) { "run.js launch plan property 'arguments[$index]' must be a string" }
-        argument.asString()
+    val arguments = argumentsValue.stringArray {
+        "run.js launch plan property 'arguments[$it]' must be a string"
     }
     return LaunchPlan(executable, arguments)
 }
 
-private fun contextJavaScript(context: RunContext): String = buildString {
-    append("Object.freeze({os: ")
-    append(jsString(context.os))
-    append(", arch: ")
-    append(jsString(context.arch))
-    append(", ver: ")
-    append(context.ver?.let(::jsString) ?: "null")
-    append(", args: Object.freeze([")
-    append(context.args.joinToString(",", transform = ::jsString))
-    append("]), packageDir: ")
-    append(jsString(context.packageDir.toAbsolutePath().normalize().toString()))
-    append("})")
+private fun Value.stringArray(error: (Long) -> String): List<String> = (0 until arraySize).map { index ->
+    val value = getArrayElement(index)
+    require(value.isString) { error(index) }
+    value.asString()
 }
 
-private fun jsString(value: String): String = buildString {
-    append('"')
-    value.forEach { character ->
-        when (character) {
-            '\\' -> append("\\\\")
-            '"' -> append("\\\"")
-            '\b' -> append("\\b")
-            '\u000C' -> append("\\f")
-            '\n' -> append("\\n")
-            '\r' -> append("\\r")
-            '\t' -> append("\\t")
-            in '\u0000'..'\u001F' -> append("\\u%04x".format(character.code))
-            '\u2028' -> append("\\u2028")
-            '\u2029' -> append("\\u2029")
-            else -> append(character)
-        }
-    }
-    append('"')
+private fun contextJavaScript(context: RunContext): String {
+    val json = JsonObject(mapOf(
+        "os" to JsonPrimitive(context.os),
+        "arch" to JsonPrimitive(context.arch),
+        "ver" to JsonPrimitive(context.ver),
+        "args" to JsonArray(context.args.map(::JsonPrimitive)),
+        "packageDir" to JsonPrimitive(context.packageDir.toAbsolutePath().normalize().toString())
+    ))
+    return "(context => { Object.freeze(context.args); return Object.freeze(context); })($json)"
 }
