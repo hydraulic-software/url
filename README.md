@@ -4,6 +4,12 @@
 - `run` takes a URL, appends a well-known path and executes what it finds there, with `zsh` integration so you can run URLs directly.
 
 To learn how to publish software for `run` [read this user guide](.agents/skills/run-tutorial/SKILL.md).
+It's also an agent skill, which you can install into a project with:
+
+```shell
+mkdir -p .agents/skills
+cp -R "$(url hydraulic-software.github.io/url/skills/run-tutorial.zip/run-tutorial/)" .agents/skills/
+```
 
 ---
 
@@ -145,21 +151,37 @@ The black-box compliance checks can be run against a native executable with
 `RUN_BIN=./build/native/nativeCompile/run python3 scripts/run-compliance.py`.
 
 The package accesses `context.os`, `context.arch`, nullable `context.ver`,
-`context.args`, and `context.packageDir`. It calls `urls()` with an array of
-URLs or a map whose values are URLs or arrays of URLs; the host resolves all
-entries concurrently and returns paths in the corresponding array or map
-shape. It may call `urls()` multiple times; calls complete in script order.
-The default export is the launch plan. On Windows, executable URLs may omit
-their final `.exe` suffix.
-
-`compose()` assembles a new cached directory from paths returned by `urls()` or
-earlier `compose()` calls. It takes an ordered array of copy operations
-(`{from, select, to, replace}`) and removal operations (`{remove}`), and returns
-the assembled directory's path:
+`context.args`, and `context.packageDir`. The host functions are asynchronous
+and return promises, so a package uses top-level `await`. `url()` resolves one
+URL to a path. `urls()` takes an array of URLs or a map whose values are URLs or
+arrays of URLs, resolves all entries concurrently and returns paths in the
+corresponding array or map shape:
 
 ```js
-const {base, patch} = urls({base: "https://example.com/app.zip/", patch: "https://example.com/patch.zip/"});
-const app = compose([
+const {java, jar} = await urls({
+  java: `https://example.com/jdk-${context.os}-${context.arch}.tar.gz/bin/java`,
+  jar: "https://example.com/app.jar",
+});
+export default {executable: java, arguments: ["-jar", jar, ...context.args]};
+```
+
+Every call starts immediately and runs concurrently with the others, so
+modules imported side by side resolve their URLs in parallel without
+coordinating. A rejected promise that the package does not handle fails the
+run. The default export is the launch plan. On Windows, executable URLs and
+launch-plan executable paths may omit their final `.exe` suffix.
+
+`compose()` assembles a new cached directory from paths returned by `url()`,
+`urls()` or earlier `compose()` calls. It takes an ordered array of copy
+operations (`{from, select, to, replace}`) and removal operations
+(`{remove}`), and returns a promise for the assembled directory's path. A
+`from` value may be a promise, so composition starts as soon as its sources
+are ready:
+
+```js
+const base = url("https://example.com/app.zip/");
+const patch = url("https://example.com/patch.zip/");
+const app = await compose([
   {from: base, to: "."},
   {remove: "plugins/legacy"},
   {from: patch, select: "bin/tool", to: "bin/tool"},

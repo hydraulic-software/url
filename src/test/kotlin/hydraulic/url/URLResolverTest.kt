@@ -14,6 +14,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.archivers.tar.TarConstants
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
+import org.graalvm.polyglot.PolyglotException
 import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -33,6 +34,8 @@ import java.nio.file.Files
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
+import java.time.Duration
+import java.util.Collections
 import java.util.HexFormat
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -52,6 +55,8 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class URLResolverTest {
@@ -1300,7 +1305,7 @@ class URLResolverTest {
     fun `run selects the JavaScript package from a local directory`() {
         val directory = (tempDir / "run.zip.d").createDirectories()
         val script = directory / "run.js"
-        script.writeText("urls({}); export default { executable: \"/bin/true\", arguments: [] };\n")
+        script.writeText("await urls({}); export default { executable: \"/bin/true\", arguments: [] };\n")
 
         assertEquals(script.toAbsolutePath(), localRunPackage(directory.toString()))
         assertEquals(null, localRunPackage("missing-run-package"))
@@ -1324,7 +1329,7 @@ class URLResolverTest {
         val plan = evaluateRunJavaScript(
             packageFile,
             RunContext("windows", "x86_64", null, emptyList(), packageDir),
-            resolve = { emptyMap() }
+            resolve = { error("unused") }
         )
 
         assertEquals(Path.of("powershell.exe"), plan.executable)
@@ -1341,7 +1346,7 @@ class URLResolverTest {
         executable.toFile().setExecutable(true)
         (directory / "run.js").writeText(
             """
-            urls({});
+            await urls({});
             export default { executable: `${'$'}{context.packageDir}/tool.sh`, arguments: context.args };
             """.trimIndent()
         )
@@ -1365,23 +1370,20 @@ class URLResolverTest {
         val packageFile = directory / "run.js"
         packageFile.writeText(
             """
-            const resolved = urls({ alpha: "https://example.com/alpha", beta: "https://example.com/beta" });
+            const resolved = await urls({ alpha: "https://example.com/alpha", beta: "https://example.com/beta" });
             export default { executable: resolved.alpha, arguments: [resolved.beta, context.os, ...context.args] };
             """.trimIndent()
         )
-        var calls = 0
-        var requested = emptyMap<String, String>()
+        val requested = Collections.synchronizedList(mutableListOf<String>())
         val plan = evaluateRunJavaScript(
             packageFile,
             RunContext("linux", "x86_64", "1.2.3", listOf("one"), directory)
-        ) { urls ->
-            calls++
-            requested = urls
-            urls.mapValues { (_, value) -> Path.of("/cache/${value.substringAfterLast('/')}") }
+        ) { url ->
+            requested += url
+            Path.of("/cache/${url.substringAfterLast('/')}")
         }
 
-        assertEquals(1, calls)
-        assertEquals(setOf("alpha", "beta"), requested.keys)
+        assertEquals(listOf("https://example.com/alpha", "https://example.com/beta"), requested.sorted())
         assertEquals(Path.of("/cache/alpha"), plan.executable)
         assertEquals(listOf("/cache/beta", "linux", "one"), plan.arguments)
     }
@@ -1392,21 +1394,22 @@ class URLResolverTest {
         val packageFile = directory / "run.js"
         packageFile.writeText(
             """
-            const unnamed = urls(["https://example.com/one", "https://example.com/two"]);
-            const named = urls({ tools: ["https://example.com/three", "https://example.com/four"] });
+            const unnamed = await urls(["https://example.com/one", "https://example.com/two"]);
+            const named = await urls({ tools: ["https://example.com/three", "https://example.com/four"], none: [] });
+            const empty = await urls([]);
             export default {
               executable: unnamed[0],
-              arguments: [unnamed[1], named.tools[0], named.tools[1]],
+              arguments: [unnamed[1], named.tools[0], named.tools[1], `${'$'}{named.none.length} ${'$'}{empty.length}`],
             };
             """.trimIndent()
         )
-        val requested = mutableListOf<String>()
+        val requested = Collections.synchronizedList(mutableListOf<String>())
         val plan = evaluateRunJavaScript(
             packageFile,
             RunContext("linux", "x86_64", null, emptyList(), directory)
-        ) { urls ->
-            requested += urls.values
-            urls.mapValues { (_, value) -> Path.of("/cache/${value.substringAfterLast('/')}") }
+        ) { url ->
+            requested += url
+            Path.of("/cache/${url.substringAfterLast('/')}")
         }
 
         assertEquals(
@@ -1419,24 +1422,244 @@ class URLResolverTest {
             requested.toSet()
         )
         assertEquals(Path.of("/cache/one"), plan.executable)
-        assertEquals(listOf("/cache/two", "/cache/three", "/cache/four"), plan.arguments)
+        assertEquals(listOf("/cache/two", "/cache/three", "/cache/four", "0 0"), plan.arguments)
+    }
+
+    @Test
+    fun `JavaScript sibling modules resolve URLs concurrently`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        (directory / "first.js").writeText("export const first = await url(\"https://example.com/first\");\n")
+        (directory / "second.js").writeText("export const second = await url(\"https://example.com/second\");\n")
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            import { first } from "./first.js";
+            import { second } from "./second.js";
+            export default { executable: first, arguments: [second] };
+            """.trimIndent()
+        )
+        // Each resolution waits for the other to start, so this only completes if the modules' requests overlap.
+        val started = CountDownLatch(2)
+        val plan = evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { url ->
+            started.countDown()
+            assertTrue(started.await(10, TimeUnit.SECONDS), "resolutions did not overlap")
+            Path.of("/cache/${url.substringAfterLast('/')}")
+        }
+
+        assertEquals(Path.of("/cache/first"), plan.executable)
+        assertEquals(listOf("/cache/second"), plan.arguments)
+    }
+
+    @Test
+    fun `JavaScript can handle resolution failures`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            let tool;
+            try {
+              tool = await url("https://primary.example.com/tool");
+            } catch (e) {
+              tool = await url("https://mirror.example.com/tool");
+            }
+            const invalid = await url(42).then(() => "resolved", e => e.message);
+            const native = url("https://mirror.example.com/tool") instanceof Promise;
+            export default { executable: tool, arguments: [invalid, String(native)] };
+            """.trimIndent()
+        )
+        val plan = evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { url ->
+            if ("primary" in url)
+                throw IllegalStateException("primary is down")
+            Path.of("/cache/mirror")
+        }
+
+        assertEquals(Path.of("/cache/mirror"), plan.executable)
+        assertEquals(listOf("run.js function url() expects a URL string", "true"), plan.arguments)
+    }
+
+    @Test
+    fun `unhandled JavaScript resolution failures fail with the original exception`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            url("https://example.com/missing");
+            await url("https://example.com/slow");
+            export default { executable: "true", arguments: [] };
+            """.trimIndent()
+        )
+        val failure = IllegalStateException("not found")
+        val slowStarted = CountDownLatch(1)
+        val slowInterrupted = CountDownLatch(1)
+        val thrown = assertFailsWith<IllegalStateException> {
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { url ->
+                if ("missing" in url) {
+                    assertTrue(slowStarted.await(10, TimeUnit.SECONDS))
+                    throw failure
+                }
+                slowStarted.countDown()
+                try {
+                    Thread.sleep(60_000)
+                } catch (e: InterruptedException) {
+                    slowInterrupted.countDown()
+                    throw e
+                }
+                error("not interrupted")
+            }
+        }
+
+        assertSame(failure, thrown)
+        // Abandoned work is interrupted and finishes before evaluation returns.
+        assertEquals(0, slowInterrupted.count)
+    }
+
+    @Test
+    fun `JavaScript evaluation waits for operations that are never awaited`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            url("https://example.com/background");
+            export default { executable: "true", arguments: [] };
+            """.trimIndent()
+        )
+        val finished = AtomicBoolean(false)
+        evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) {
+            Thread.sleep(200)
+            finished.set(true)
+            Path.of("/cache/background")
+        }
+
+        assertTrue(finished.get())
+    }
+
+    @Test
+    fun `JavaScript evaluation fails when it awaits a promise that never settles`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText("await new Promise(() => {});\nexport default { executable: \"true\", arguments: [] };\n")
+
+        val failure = assertFailsWith<IllegalStateException> {
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { error("unused") }
+        }
+        assertContains(failure.message.orEmpty(), "never settles")
+    }
+
+    @Test
+    fun `JavaScript can fall back from a failure that arrives while awaiting another operation`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            const tool = url("https://example.com/tool");
+            const config = url("https://primary.example.com/config").catch(() => url("https://mirror.example.com/config"));
+            export default { executable: await tool, arguments: [await config] };
+            """.trimIndent()
+        )
+        // The tool resolves only after the fallback has started, so the primary failure arrives while run.js awaits it.
+        val fallbackStarted = CountDownLatch(1)
+        val plan = evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { url ->
+            when {
+                "primary" in url -> throw IllegalStateException("primary is down")
+                "mirror" in url -> fallbackStarted.countDown()
+                else -> assertTrue(fallbackStarted.await(10, TimeUnit.SECONDS), "fallback did not start")
+            }
+            Path.of("/cache/${url.substringAfterLast('/')}")
+        }
+
+        assertEquals(Path.of("/cache/tool"), plan.executable)
+        assertEquals(listOf("/cache/config"), plan.arguments)
+    }
+
+    @Test
+    fun `abandoned operations that ignore interruption do not hang a failed evaluation`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            url("https://example.com/stuck");
+            await url("https://example.com/missing");
+            export default { executable: "true", arguments: [] };
+            """.trimIndent()
+        )
+        val failure = IllegalStateException("not found")
+        val stuckStarted = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        try {
+            val thrown = assertFailsWith<IllegalStateException> {
+                evaluateRunJavaScript(
+                    packageFile,
+                    RunContext("linux", "x86_64", null, emptyList(), directory),
+                    abandonmentGrace = Duration.ofMillis(100)
+                ) { url ->
+                    if ("missing" in url) {
+                        assertTrue(stuckStarted.await(10, TimeUnit.SECONDS))
+                        throw failure
+                    }
+                    stuckStarted.countDown()
+                    while (true) {
+                        try {
+                            if (release.await(10, TimeUnit.SECONDS))
+                                break
+                        } catch (_: InterruptedException) {
+                            // Simulates work that cannot be interrupted.
+                        }
+                    }
+                    Path.of("/cache/stuck")
+                }
+            }
+            assertSame(failure, thrown)
+        } finally {
+            release.countDown()
+        }
+    }
+
+    @Test
+    fun `JavaScript errors report their location in the package`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText("await url(\"https://example.com/tool\");\nthrow new Error(\"boom\");\n")
+
+        val failure = assertFailsWith<PolyglotException> {
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) {
+                Path.of("/cache/tool")
+            }
+        }
+        assertContains(failure.message.orEmpty(), "boom")
+        // Verbose diagnostics print the stack trace, whose first guest frame is the throw in run.js.
+        val location = assertNotNull(failure.polyglotStackTrace.first { it.isGuestFrame }.sourceLocation)
+        assertEquals(packageFile.toRealPath().toString(), location.source.path)
+        assertEquals(2, location.startLine)
+    }
+
+    @Test
+    fun `JavaScript values thrown in place of errors are described`() {
+        val directory = (tempDir / "run.zip.d").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText("await url(\"https://example.com/tool\");\nthrow {code: 1};\n")
+
+        val failure = assertFailsWith<IllegalStateException> {
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) {
+                Path.of("/cache/tool")
+            }
+        }
+        assertContains(failure.message.orEmpty(), "{\"code\":1}")
     }
 
     @Test
     fun `make-run-zip JavaScript selects the portable zip fallback`() {
         val packageFile = Path.of("site/r/make-run-zip/run.zip.d/run.js").toAbsolutePath()
         val packageDir = packageFile.parent
-        val requested = mutableMapOf<String, String>()
+        val requested = Collections.synchronizedList(mutableListOf<String>())
         val plan = evaluateRunJavaScript(
             packageFile,
             RunContext("linux", "x86_64", null, listOf("source", "output.zip"), packageDir)
-        ) { urls ->
-            requested.putAll(urls)
-            urls.mapValues { (name, _) -> Path.of("/cache/$name") }
+        ) { url ->
+            requested += url
+            Path.of("/cache/zip")
         }
 
-        assertEquals(setOf("zip"), requested.keys)
-        assertTrue(requested.getValue("zip").contains("7z2603-linux-x64.tar.xz/7zz"))
+        assertTrue(requested.single().contains("7z2603-linux-x64.tar.xz/7zz"))
         assertEquals(packageDir.resolve("make-run-zip.sh").toAbsolutePath(), plan.executable)
         assertEquals(listOf("/cache/zip", "source", "output.zip"), plan.arguments)
         assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").readText(), "OpenSSL is required on PATH")
@@ -1558,18 +1781,18 @@ class URLResolverTest {
     fun `JavaScript launch plans allow multiple URL calls and reject malformed results`() {
         val directory = (tempDir / "run.zip.d").createDirectories()
         val secondCall = directory / "second.js"
-        secondCall.writeText("urls({ first: \"https://example.com/first\" }); urls({ second: \"https://example.com/second\" }); export default { executable: \"true\", arguments: [] }; ")
-        var callCount = 0
+        secondCall.writeText("await urls({ first: \"https://example.com/first\" }); await urls({ second: \"https://example.com/second\" }); export default { executable: \"true\", arguments: [] }; ")
+        val callCount = AtomicInteger()
         evaluateRunJavaScript(secondCall, RunContext("linux", "x86_64", null, emptyList(), directory)) {
-            callCount++
-            it.mapValues { (_, value) -> Path.of("/cache/${value.substringAfterLast('/')}") }
+            callCount.incrementAndGet()
+            Path.of("/cache/${it.substringAfterLast('/')}")
         }
-        assertEquals(2, callCount)
+        assertEquals(2, callCount.get())
 
         val malformed = directory / "malformed.js"
-        malformed.writeText("urls({}); export default { executable: \"true\", arguments: [1] }; ")
+        malformed.writeText("await urls({}); export default { executable: \"true\", arguments: [1] }; ")
         assertFailsWith<IllegalArgumentException> {
-            evaluateRunJavaScript(malformed, RunContext("linux", "x86_64", null, emptyList(), directory)) { emptyMap() }
+            evaluateRunJavaScript(malformed, RunContext("linux", "x86_64", null, emptyList(), directory)) { error("unused") }
         }
     }
 
@@ -1581,14 +1804,14 @@ class URLResolverTest {
         packageFile.writeText(
             """
             import { executable } from "./helper.js";
-            urls({});
+            await urls({});
             export default { executable, arguments: [] };
             """.trimIndent()
         )
 
         assertEquals(
             Path.of("true"),
-            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { emptyMap() }
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { error("unused") }
                 .executable
         )
     }
@@ -1599,14 +1822,14 @@ class URLResolverTest {
         val packageFile = directory / "run.js"
         packageFile.writeText(
             """
-            urls({});
+            await urls({});
             Java.type("java.lang.System");
             export default { executable: "true", arguments: [] };
             """.trimIndent()
         )
 
         assertFailsWith<RuntimeException> {
-            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { emptyMap() }
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory)) { error("unused") }
         }
 
         (tempDir / "outside.js").writeText("export default \"outside\";\n")
@@ -1614,12 +1837,12 @@ class URLResolverTest {
         escape.writeText(
             """
             import outside from "../outside.js";
-            urls({});
+            await urls({});
             export default { executable: outside, arguments: [] };
             """.trimIndent()
         )
         assertFailsWith<RuntimeException> {
-            evaluateRunJavaScript(escape, RunContext("linux", "x86_64", null, emptyList(), directory)) { emptyMap() }
+            evaluateRunJavaScript(escape, RunContext("linux", "x86_64", null, emptyList(), directory)) { error("unused") }
         }
     }
 
@@ -1632,7 +1855,7 @@ class URLResolverTest {
         }
         (directory / "run.js").writeText(
             """
-            const resolved = urls({ tool: "${server.uri("/tool")}" });
+            const resolved = await urls({ tool: "${server.uri("/tool")}" });
             export default { executable: resolved.tool, arguments: context.args };
             """.trimIndent()
         )
@@ -1684,18 +1907,18 @@ class URLResolverTest {
         val javaExe = tempDir / "java.exe"
         val verifier = tempDir / "verifier.jar"
 
-        val macUrls = mutableMapOf<String, String>()
+        val macUrls = Collections.synchronizedList(mutableListOf<String>())
         val macPlan = evaluateRunJavaScript(
             packageFile,
             RunContext("macos", "arm64", null, listOf("input.cel"), packageDir)
-        ) { urls ->
-            macUrls.putAll(urls)
-            mapOf("java" to java, "verifier" to verifier)
+        ) { url ->
+            macUrls += url
+            if ("verifier-cli" in url) verifier else java
         }
-        assertTrue(macUrls.getValue("java").contains(
+        assertTrue(macUrls.single { "graalvm" in it }.contains(
             "graalvm-jdk-25_macos-aarch64_bin.tar.gz/graalvm-jdk-25.0.4+7.1/Contents/Home/bin/java#sha256="
         ))
-        assertTrue(macUrls.getValue("verifier").endsWith(
+        assertTrue(macUrls.single { "verifier-cli" in it }.endsWith(
             "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
         ))
         assertEquals(java, macPlan.executable)
@@ -1710,18 +1933,18 @@ class URLResolverTest {
             macPlan.arguments
         )
 
-        val windowsUrls = mutableMapOf<String, String>()
+        val windowsUrls = Collections.synchronizedList(mutableListOf<String>())
         val windowsPlan = evaluateRunJavaScript(
             packageFile,
             RunContext("windows", "x86_64", "0.14.0", emptyList(), packageDir)
-        ) { urls ->
-            windowsUrls.putAll(urls)
-            mapOf("java" to javaExe, "verifier" to verifier)
+        ) { url ->
+            windowsUrls += url
+            if ("verifier-cli" in url) verifier else javaExe
         }
-        assertTrue(windowsUrls.getValue("java").contains(
+        assertTrue(windowsUrls.single { "graalvm" in it }.contains(
             "graalvm-jdk-25_windows-x64_bin.zip/graalvm-jdk-25.0.4+7.1/bin/java#sha256="
         ))
-        assertTrue(windowsUrls.getValue("verifier").endsWith(
+        assertTrue(windowsUrls.single { "verifier-cli" in it }.endsWith(
             "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
         ))
         assertEquals(javaExe, windowsPlan.executable)
@@ -1735,15 +1958,15 @@ class URLResolverTest {
             windowsPlan.arguments
         )
 
-        val unlockedUrls = mutableMapOf<String, String>()
+        val unlockedUrls = Collections.synchronizedList(mutableListOf<String>())
         evaluateRunJavaScript(
             packageFile,
             RunContext("windows", "x86_64", "1.2.3", emptyList(), packageDir)
-        ) { urls ->
-            unlockedUrls.putAll(urls)
-            mapOf("java" to javaExe, "verifier" to verifier)
+        ) { url ->
+            unlockedUrls += url
+            if ("verifier-cli" in url) verifier else javaExe
         }
-        assertTrue(unlockedUrls.getValue("verifier").endsWith(
+        assertTrue(unlockedUrls.single { "verifier-cli" in it }.endsWith(
             "/1.2.3/verifier-cli-1.2.3.jar"
         ))
 
@@ -1751,7 +1974,7 @@ class URLResolverTest {
             evaluateRunJavaScript(
                 packageFile,
                 RunContext("freebsd", "x86_64", null, emptyList(), packageDir),
-                resolve = { emptyMap() }
+                resolve = { error("unused") }
             )
         }
         assertContains(unsupportedOs.message.orEmpty(), "Unsupported GraalVM platform: freebsd-x64")
@@ -1767,8 +1990,7 @@ class URLResolverTest {
         packageFile.writeText(
             """
             import { graalvm } from "./graalvm.js";
-            const resolved = urls({ java: graalvm("25.0.5+7.2") });
-            export default { executable: resolved.java, arguments: [] };
+            export default { executable: await graalvm("25.0.5+7.2"), arguments: [] };
             """.trimIndent()
         )
         var requested = ""
@@ -1776,13 +1998,30 @@ class URLResolverTest {
         evaluateRunJavaScript(
             packageFile,
             RunContext("linux", "x86_64", null, emptyList(), directory)
-        ) { urls ->
-            requested = urls.getValue("java")
-            mapOf("java" to tempDir / "java")
+        ) { url ->
+            requested = url
+            tempDir / "java"
         }
 
         assertContains(requested, "/graalvm-jdk-25_linux-x64_bin.tar.gz/graalvm-jdk-25.0.5+7.2/bin/java")
         assertFalse(requested.contains("#sha256="))
+    }
+
+    @Test
+    fun `Windows launch plan executables may omit the exe suffix`() {
+        val bin = (tempDir / "bin").createDirectories()
+        (bin / "tool.exe").writeText("")
+        (bin / "tool-1.2.exe").writeText("")
+        (bin / "both").writeText("")
+        (bin / "both.exe").writeText("")
+
+        assertEquals(bin / "tool.exe", launchExecutable(bin / "tool", windows = true))
+        assertEquals(bin / "tool-1.2.exe", launchExecutable(bin / "tool-1.2", windows = true))
+        assertEquals(bin / "tool.exe", launchExecutable(bin / "tool.exe", windows = true))
+        assertEquals(bin / "both", launchExecutable(bin / "both", windows = true))
+        assertEquals(bin / "missing", launchExecutable(bin / "missing", windows = true))
+        assertEquals(bin / "tool", launchExecutable(bin / "tool", windows = false))
+        assertEquals(Path.of("tool"), launchExecutable(Path.of("tool"), windows = true))
     }
 
     @Test

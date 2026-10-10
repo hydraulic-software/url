@@ -30,7 +30,7 @@ const platformAssets = assets[context.os]?.[context.arch];
 if (platformAssets === undefined)
   throw new Error(`make-run-zip does not support ${context.os}-${context.arch}`);
 
-const resolved = urls(platformAssets);
+const resolved = await urls(platformAssets);
 const script = `${context.packageDir}/make-run-zip.${context.os === "windows" ? "ps1" : "sh"}`;
 const argumentsFor = context.os === "windows"
   ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, resolved.openssl, resolved.zip, ...context.args]

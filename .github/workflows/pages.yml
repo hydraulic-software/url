@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - site/**
+      - .agents/skills/**
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -38,6 +39,16 @@ jobs:
                   -x context.d.ts '*/context.d.ts' timestamp.tsr
               )
             done
+      # Agent skills are authored in .agents/skills. Publish each as browsable
+      # files and as a ZIP whose top-level directory is the skill's name.
+      - name: Package agent skills
+        run: |
+          mkdir -p site/skills
+          cp -R .agents/skills/. site/skills/
+          for skill in site/skills/*/; do
+            name=$(basename "$skill")
+            (cd site/skills && zip -X -r "$name.zip" "$name")
+          done
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

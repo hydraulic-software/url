@@ -32,6 +32,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ComposeTest {
@@ -177,7 +178,7 @@ class ComposeTest {
     @Test
     fun `sources must be known, have an identity and stay inside their entry`() {
         val base = source("base", "file" to "x")
-        assertFailure("is not a path returned by urls() or compose()") {
+        assertFailure("is not a path returned by url(), urls() or compose()") {
             Composer(makeCache(), quarantine = false, minimumFreeSpaceBytes = 0).compose(listOf(copy(base, to = "."))) { null }
         }
         val anonymous = base.copy(identity = null)
@@ -340,10 +341,10 @@ class ComposeTest {
         val directory = (tempDir / "package").createDirectories()
         fun failure(recipe: String): String {
             val packageFile = directory / "run.js"
-            packageFile.writeText("compose($recipe);\nexport default { executable: \"x\", arguments: [] };")
+            packageFile.writeText("await compose($recipe);\nexport default { executable: \"x\", arguments: [] };")
             return assertFailsWith<RuntimeException>(recipe) {
                 evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory), compose = { Path.of("/unused") }) {
-                    emptyMap()
+                    error("unused")
                 }
             }.message.orEmpty()
         }
@@ -365,7 +366,7 @@ class ComposeTest {
         val packageFile = directory / "run.js"
         packageFile.writeText(
             """
-            const app = compose([{from: "/a", to: "."}, {remove: "x"}, {from: "/b", select: "s", to: "t", replace: true}]);
+            const app = await compose([{from: "/a", to: "."}, {remove: "x"}, {from: Promise.resolve("/b"), select: "s", to: "t", replace: true}]);
             export default { executable: app, arguments: [] };
             """.trimIndent()
         )
@@ -374,7 +375,7 @@ class ComposeTest {
         val plan = evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory), compose = {
             received = it
             result
-        }) { emptyMap() }
+        }) { error("unused") }
 
         assertEquals(
             listOf(
@@ -385,6 +386,106 @@ class ComposeTest {
             received
         )
         assertEquals(result.toAbsolutePath().normalize(), plan.executable)
+    }
+
+    @Test
+    fun `run js compose uses the recipe as it was when called`() {
+        val directory = (tempDir / "package").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            const recipe = [{from: Promise.resolve("/a"), to: "."}];
+            const composed = compose(recipe);
+            recipe[0].to = "changed";
+            recipe.push({remove: "x"});
+            export default { executable: await composed, arguments: [] };
+            """.trimIndent()
+        )
+        var received: List<ComposeOperation>? = null
+        evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory), compose = {
+            received = it
+            tempDir / "composed"
+        }) { error("unused") }
+
+        assertEquals(listOf(ComposeOperation.Copy(from = "/a", to = ".")), received)
+    }
+
+    @Test
+    fun `run js evaluation waits for compositions that are never awaited`() {
+        val directory = (tempDir / "package").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            compose([{from: url("https://example.com/slow"), to: "."}]);
+            export default { executable: "x", arguments: [] };
+            """.trimIndent()
+        )
+        var received: List<ComposeOperation>? = null
+        evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory), compose = {
+            received = it
+            tempDir / "composed"
+        }) {
+            Thread.sleep(200)
+            Path.of("/cache/slow")
+        }
+
+        assertEquals(listOf(ComposeOperation.Copy(from = Path.of("/cache/slow").toString(), to = ".")), received)
+    }
+
+    @Test
+    fun `run js compose sources that never settle fail evaluation`() {
+        val directory = (tempDir / "package").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            compose([{from: new Promise(() => {}), to: "."}]);
+            export default { executable: "x", arguments: [] };
+            """.trimIndent()
+        )
+
+        val failure = assertFailsWith<IllegalStateException> {
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory), compose = {
+                error("unused")
+            }) { error("unused") }
+        }
+        assertContains(failure.message.orEmpty(), "never settles")
+    }
+
+    @Test
+    fun `run js compose failures reading the recipe reject its promise`() {
+        val directory = (tempDir / "package").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            const message = await compose([{get from() { throw new Error("getter failed") }, to: "."}]).catch(e => e.message);
+            export default { executable: "x", arguments: [message] };
+            """.trimIndent()
+        )
+        val plan = evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory), compose = {
+            error("unused")
+        }) { error("unused") }
+
+        assertEquals(listOf("getter failed"), plan.arguments)
+    }
+
+    @Test
+    fun `run js compose source failures are reported with the original exception`() {
+        val directory = (tempDir / "package").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText(
+            """
+            await compose([{from: url("https://example.com/missing"), to: "."}]);
+            export default { executable: "x", arguments: [] };
+            """.trimIndent()
+        )
+        val failure = IllegalStateException("not found")
+        val thrown = assertFailsWith<IllegalStateException> {
+            evaluateRunJavaScript(packageFile, RunContext("linux", "x86_64", null, emptyList(), directory), compose = {
+                error("unused")
+            }) { throw failure }
+        }
+
+        assertSame(failure, thrown)
     }
 
     // Content revisions
@@ -483,8 +584,10 @@ class ComposeTest {
         val directory = (tempDir / "package").createDirectories()
         (directory / "run.js").writeText(
             """
-            const {base, patch} = urls({base: "${server.uri("/base.zip/app/")}", patch: "${server.uri("/patch.zip/")}"});
-            const app = compose([
+            // Sources are passed as promises, so composition starts once both resolve.
+            const base = url("${server.uri("/base.zip/app/")}");
+            const patch = url("${server.uri("/patch.zip/")}");
+            const app = await compose([
               {from: base, to: "."},
               {remove: "plugins/legacy"},
               {from: patch, select: "message", to: "message"},
@@ -523,8 +626,8 @@ class ComposeTest {
         val marker = tempDir / "launched"
         (directory / "run.js").writeText(
             """
-            const {base} = urls({base: "${server.uri("/base.zip/")}"});
-            compose([{from: base, select: "missing", to: "x"}]);
+            const {base} = await urls({base: "${server.uri("/base.zip/")}"});
+            await compose([{from: base, select: "missing", to: "x"}]);
             export default { executable: "touch", arguments: ["$marker"] };
             """.trimIndent()
         )

@@ -19,7 +19,7 @@ Inside the zip or directory there must be a `run.js` file. It is evaluated as an
 const ver = context.ver ?? "0.14.0";
 const platform = `${context.os}-${context.arch}`;
 
-const resolved = urls({
+const resolved = await urls({
   java: `https://example.com/jdk-${platform}.tar.gz/bin/java`,
   verifier: `https://example.com/verifier-${ver}.jar`,
 });
@@ -32,7 +32,7 @@ export default {
 
 The package must export its launch plan as the default export. The exported value must be an object with a non-empty string `executable` property and an `arguments` array containing only strings. The host starts the resulting process directly and passes the arguments unchanged.
 
-The package may import other JavaScript modules with relative paths, for example `import { select } from "./platform.js"`. Imports are resolved from the package directory and may only read files within that package. Node.js builtins and non-local module sources are unavailable.
+The package may import other JavaScript modules with relative paths, for example `import { select } from "./platform.js"`. Imports are resolved from the package directory and may only read files within that package. Node.js builtins and non-local module sources are unavailable. Modules may use top-level `await`.
 
 ## JavaScript environment
 
@@ -44,44 +44,94 @@ The implementation supplies one immutable `context` object:
 * `context.args`: arguments passed after the locator.
 * `context.packageDir`: the absolute path to the directory containing `run.js`.
 
-The host supplies the `urls` and `compose` functions. They may be called any number of times, and calls complete in script order. The `urls` function accepts either an array of URL strings, returning an array of absolute local paths, or an object whose property values are URL strings or arrays of URL strings. Object properties containing arrays return arrays of paths under the same property name. The host resolves all entries in each call concurrently. Empty arrays and objects are valid.
+The host supplies the asynchronous `url`, `urls`, and `compose` functions. They
+may be called any number of times. Each returns a promise and starts its work
+immediately, so operations run concurrently with each other and with the rest
+of the evaluation. The host may limit how many resolutions run at once.
+
+The `url` function accepts one URL string and fulfills with an absolute local
+path. The `urls` function accepts either an array of URL strings, fulfilling
+with an array of absolute local paths, or an object whose property values are
+URL strings or arrays of URL strings. Object properties containing arrays
+fulfill with arrays of paths under the same property name. The host resolves
+all entries in each call concurrently, and the promise rejects as soon as one
+entry fails. Empty arrays and objects are valid.
 
 ```js
-const files = urls([
+const tool = await url("https://example.com/tool");
+const files = await urls([
   "https://example.com/tool",
   "https://example.com/config",
 ]);
-const platforms = urls({
+const platforms = await urls({
   linux: "https://example.com/tool-linux",
   macos: ["https://example.com/tool-macos", "https://example.com/helper-macos"],
 });
 ```
 
+Because resolution is asynchronous, independent modules resolve concurrently
+without coordinating. Modules imported by the same module are evaluated as
+siblings, so while one awaits a resolution the others proceed:
+
+```js
+// jdk.js
+export const javaHome = await url(`https://example.com/jdk-${context.os}-${context.arch}.tar.gz/`);
+
+// run.js: the JDK and application downloads overlap.
+import {javaHome} from "./jdk.js";
+import {appJar} from "./app.js";
+export default {executable: `${javaHome}/bin/java`, arguments: ["-jar", appJar]};
+```
+
+Invalid arguments, such as a non-string URL, reject the returned promise
+rather than throwing synchronously. A package may handle a rejection, for
+example to fall back to a mirror. As in other JavaScript hosts, a promise that
+is rejected without a handler fails the run, even if the package never awaits
+it. A rejection is unhandled if it has no handler once pending promise jobs
+have run, so a package that starts an operation early and awaits it later
+should attach its handler when it starts the operation:
+
+```js
+const tool = url("https://example.com/tool");
+// Attaching the handler now covers a failure that arrives while `tool` is awaited.
+const config = url("https://example.com/config").catch(() => url("https://mirror.example.com/config"));
+export default {executable: await tool, arguments: [await config]};
+```
+
+Evaluation completes when the module's evaluation has completed and every
+operation it started has settled; the host does not launch a process while an
+operation is outstanding, even one whose result the package never uses. If
+evaluation fails, the host abandons outstanding operations and waits for them
+to stop before releasing the cache entries they use. An implementation may stop
+waiting after a grace period, so that an operation which cannot be interrupted
+does not prevent `run` from failing. Evaluation that can never complete is an
+error: for example, a module that awaits a promise which no outstanding host
+operation can settle, or a `compose` call, awaited or not, with a `from`
+promise that never settles.
+
 URL values are passed to the ordinary URL resolver unchanged, including archive members and `#sha256=` fragments. On Windows, an executable URL may omit its final `.exe` suffix; resolution retries with `.exe` when the original resource or archive member is missing.
 
 The JavaScript package cannot access host classes, arbitrary files, sockets, environment variables, native APIs, processes, or threads. The module loader may read imported JavaScript files from within the package. Implementations may use a JavaScript engine embedded in the host or a separate JavaScript subprocess, but must preserve this capability boundary and must not grant the package a direct process-execution function.
 
-JavaScript errors, invalid URL maps, invalid composition recipes, composition failures, invalid launch plans, and resolver errors cause `run` to fail without launching a process. Diagnostics go to stderr. The command may provide a verbose mode that includes exception stack traces; this implementation enables it with `--verbose` or `URL_VERBOSE=1`.
+Uncaught JavaScript errors, invalid launch plans, and unhandled rejections, including those from invalid URL maps, invalid composition recipes, composition failures, and resolver errors, cause `run` to fail without launching a process. Diagnostics go to stderr. The command may provide a verbose mode that includes exception stack traces; this implementation enables it with `--verbose` or `URL_VERBOSE=1`.
 
 A package may use files in its directory as executable or argument data. A package that needs more complicated behavior should include a separate executable or script and return it in the launch plan.
 
 ## Directory composition
 
 The `compose` function assembles files and directory trees from resolved cache
-entries into a single cached directory. It synchronously returns that
-directory's absolute path as a string. It accepts a non-empty array of ordered
-operations. Each operation must be either a copy object with properties
+entries into a single cached directory. It returns a promise that fulfills with
+that directory's absolute path as a string. It accepts a non-empty array of
+ordered operations. Each operation must be either a copy object with properties
 `from`, `select`, `to`, and `replace`, or a removal object with only a `remove`
 property. Mixing copy and removal properties, unknown properties, and
 incorrect property types are errors.
 
 ```js
-const {base, patch} = urls({
-  base: "https://example.com/app.zip/",
-  patch: "https://example.com/replacement.zip/",
-});
+const base = url("https://example.com/app.zip/");
+const patch = url("https://example.com/replacement.zip/");
 
-const app = compose([
+const app = await compose([
   {from: base, to: "."},
   {remove: "plugins/legacy"},
   {remove: "bin/unwanted-tool"},
@@ -97,8 +147,11 @@ export default {
 
 ### Copy operations
 
-`from` and `to` are required non-empty strings. `from` must exactly match a
-path returned by `urls` or an earlier `compose` call during this evaluation.
+`to` is a required non-empty string. `from` is required and is either a
+non-empty string or a promise fulfilling with one; `compose` waits for every
+`from` promise before validating the recipe, and rejects if any of them
+rejects. The resulting string must exactly match a path produced by `url`,
+`urls`, or an earlier `compose` call during this evaluation.
 If the same path was returned for more than one source identity, as defined
 under composition cache identity, using it as `from` is an error. Arbitrary
 local paths, including package files, are not composition sources.
@@ -140,7 +193,7 @@ Removal affects only the assembly, not any source entry. Later operations may
 recreate removed content. For example:
 
 ```js
-const app = compose([
+const app = await compose([
   {from: base, to: "."},
   {remove: "bin/tool"},
   {from: patch, select: "bin/tool", to: "bin/tool"},
@@ -245,6 +298,8 @@ usable independently of later source-entry eviction.
 
 A bare `executable` name is resolved using the host's normal command search path. Other relative executable paths are resolved against `context.packageDir`. Absolute paths are used as supplied after normalization.
 
+On Windows, a non-bare `executable` path may omit its final `.exe` suffix, as executable URLs may. If no file exists at the path but one exists with `.exe` appended, the host launches that file. Packages can therefore build executable paths, such as `${home}/bin/java`, the same way on every platform.
+
 The host keeps resolved source and composition cache entries open until the child process exits, and releases them if evaluation or launch fails. This allows future implementations to expose exactly those paths to a process sandbox.
 
 ## Timestamped packages
@@ -276,4 +331,4 @@ A non-empty `@VERSION` suffix on the locator, before any query or fragment, is r
 
 ## Security
 
-JavaScript is a general-purpose language. A conforming implementation must configure its engine so the package receives only the context, `urls`, and `compose` capabilities described above. Composition grants access only to paths returned during the current evaluation and does not permit arbitrary filesystem reads or writes. Resource exhaustion limits and stronger process isolation depend on the host platform and JavaScript engine; implementations should apply them where available. GraalVM users should consult its [sandboxing documentation](https://www.graalvm.org/latest/security-guide/sandboxing/) when evaluating packages that are not trusted.
+JavaScript is a general-purpose language. A conforming implementation must configure its engine so the package receives only the context, `url`, `urls`, and `compose` capabilities described above. Composition grants access only to paths returned during the current evaluation and does not permit arbitrary filesystem reads or writes. Resource exhaustion limits and stronger process isolation depend on the host platform and JavaScript engine; implementations should apply them where available. GraalVM users should consult its [sandboxing documentation](https://www.graalvm.org/latest/security-guide/sandboxing/) when evaluating packages that are not trusted.

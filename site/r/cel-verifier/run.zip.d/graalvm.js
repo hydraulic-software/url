@@ -1,4 +1,4 @@
-import {isMac, isWindows} from "./utils.js";
+import {isMac, isWindows, mapArch} from "./utils.js";
 
 const javaHashes = {
   "25.0.4+7.1": {
@@ -10,16 +10,9 @@ const javaHashes = {
   },
 };
 
-function mapArch(arch) {
-  switch (arch) {
-    case "x86_64": return "x64";
-    case "arm64": return "aarch64";
-    default: return arch;
-  }
-}
-
-export function graalvm(version) {
-  const platform = `${context.os}-${mapArch(context.arch)}`;
+/** Starts resolving the `java` launcher of an Oracle GraalVM release, returning a promise of its path. */
+export function graalvm(version = "25.0.4+7.1") {
+  const platform = `${context.os}-${mapArch()}`;
   const archive = isWindows ? "zip" : "tar.gz";
   const bundle = isMac ? "Contents/Home/" : "";
   const hash = javaHashes[version]?.[platform];
@@ -30,5 +23,5 @@ export function graalvm(version) {
 
   const majorVersion = version.split(".")[0];
   const lock = hash === undefined ? "" : `#sha256=${hash}`;
-  return `https://download.oracle.com/graalvm/${majorVersion}/latest/graalvm-jdk-${majorVersion}_${platform}_bin.${archive}/graalvm-jdk-${version}/${bundle}bin/java${lock}`;
+  return url(`https://download.oracle.com/graalvm/${majorVersion}/latest/graalvm-jdk-${majorVersion}_${platform}_bin.${archive}/graalvm-jdk-${version}/${bundle}bin/java${lock}`);
 }

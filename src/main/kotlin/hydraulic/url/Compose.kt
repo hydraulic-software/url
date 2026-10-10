@@ -54,7 +54,7 @@ internal class Composer(
             when (operation) {
                 is ComposeOperation.Copy -> {
                     val from = source(operation.from)
-                        ?: throw IllegalArgumentException("$label: 'from' is not a path returned by urls() or compose(): ${operation.from}")
+                        ?: throw IllegalArgumentException("$label: 'from' is not a path returned by url(), urls() or compose(): ${operation.from}")
                     val identity = from.identity
                         ?: throw IllegalArgumentException("$label: 'from' cannot be used as a composition source: ${operation.from}")
                     Step.Copy(

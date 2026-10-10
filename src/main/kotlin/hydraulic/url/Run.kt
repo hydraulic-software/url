@@ -113,16 +113,14 @@ class Run(
                             sources.add(composed.path, ComposeSource(composer.identityOf(key), composed.path, composed.path))
                             composed.path
                         }
-                        val plan = evaluateRunJavaScript(packagePath, context, compose) { urls ->
-                            parallelMapOrdered(urls.entries.toList()) { _, (name, value) ->
-                                val (resolved, effectiveURI) = resolveRunURLWithEffectiveURI(resolver, parseURL(value), windows)
-                                opened += resolved
-                                val path = resolved.path.toAbsolutePath()
-                                sources.add(path, ComposeSource(sourceIdentity(effectiveURI, resolved), path, resolved.entryDirectory))
-                                name to path
-                            }.toMap()
+                        val plan = evaluateRunJavaScript(packagePath, context, compose) { url ->
+                            val (resolved, effectiveURI) = resolveRunURLWithEffectiveURI(resolver, parseURL(url), windows)
+                            opened += resolved
+                            val path = resolved.path.toAbsolutePath()
+                            sources.add(path, ComposeSource(sourceIdentity(effectiveURI, resolved), path, resolved.entryDirectory))
+                            path
                         }
-                        return runResolvedPath(plan.executable, plan.arguments, environment)
+                        return runResolvedPath(launchExecutable(plan.executable, windows), plan.arguments, environment)
                     } finally {
                         opened.forEach(ResolvedURL::close)
                     }
@@ -250,6 +248,17 @@ internal class ComposeSources {
 
     @Synchronized
     fun get(path: String): ComposeSource? = sources[path]
+}
+
+/**
+ * On Windows, a launch plan's executable path may omit its `.exe` suffix, as executable URLs may. Windows would append it
+ * anyway for names without a dot, but not for names such as `tool-1.2`. Bare names are left to the command search path.
+ */
+internal fun launchExecutable(executable: Path, windows: Boolean): Path {
+    if (!windows || executable.parent == null || executable.exists())
+        return executable
+    val withSuffix = executable.resolveSibling("${executable.fileName}.exe")
+    return if (withSuffix.exists()) withSuffix else executable
 }
 
 private fun URI.withExecutableSuffix(): URI {

@@ -1,6 +1,6 @@
 ---
 name: run-tutorial
-description: Explain Hydraulic's run.zip format and guide authors creating or testing portable JavaScript launchers.
+description: Explain Hydraulic's run.zip format and guide authors creating, reviewing or testing portable JavaScript launchers, including the code style for reusable helper modules.
 ---
 
 # Using `run`
@@ -15,28 +15,32 @@ A package contains a small JavaScript launch description. The host provides an
 immutable `context` object with `os`, `arch`, nullable `ver`, `args`, and
 `packageDir` properties.
 
-Call `urls` with the resources needed by the launch plan. It accepts either an
-array of URLs or a map whose values are URLs or arrays of URLs. The host
-resolves all entries concurrently and returns the corresponding local cache
-paths in the same shape. Multiple calls are allowed, though they complete in
-script order. Finish
-the file with the launch-plan expression:
+The host provides three asynchronous functions. Each returns a promise and
+starts its work immediately, so operations run concurrently with each other and
+with the rest of the script:
+
+* `url(location)` resolves one URL to a local cache path.
+* `urls(requests)` takes an array of URLs, or a map whose values are URLs or
+  arrays of URLs, and resolves them to paths in the same shape.
+* `compose(operations)` assembles a cached directory from paths returned by the
+  other functions. See [SPEC-RUN.md](https://github.com/hydraulic-software/url/blob/master/SPEC-RUN.md) for its recipe format.
+
+Start every download before awaiting any of them, then await them while
+building the launch plan:
 
 ```js
-const resolved = urls({
-  tool: "https://example.com/tool.tar.gz/bin/tool",
-});
+const tool = url("https://example.com/tool.tar.gz/bin/tool");
+const config = url("https://example.com/config.json");
 
-export default { executable: resolved.tool, arguments: context.args };
+export default { executable: await tool, arguments: ["--config", await config, ...context.args] };
 ```
 
-For unnamed resources, use an array. Named groups can contain arrays:
+A rejection that the package doesn't handle fails the run. To fall back to a
+mirror, attach the handler when you call the function, not where you later
+await the result:
 
 ```js
-const files = urls(["https://example.com/tool", "https://example.com/config"]);
-const platformFiles = urls({
-  macos: ["https://example.com/tool-macos", "https://example.com/helper-macos"],
-});
+const tool = url("https://example.com/tool").catch(() => url("https://mirror.example.com/tool"));
 ```
 
 The default export must contain a non-empty string `executable` and an array
@@ -53,15 +57,13 @@ packaged executable for behavior that belongs in the launched program.
 
 ## Package guidance
 
-Respect `context.ver` when selecting a release. Treat unknown operating systems
-and architectures as unsupported. Keep all URLs in one `urls` call so downloads
-can run concurrently, use archive-member URLs where appropriate, and prefer
-hash locks for releases whose content is known.
+Follow [the conventions](references/CONVENTIONS.md) when writing or reviewing a
+package. They cover required behavior, how to structure reusable helper modules
+so packages stay consistent, and Windows `.exe` handling. The
+[CEL verifier package](https://github.com/hydraulic-software/url/tree/master/site/r/cel-verifier/run.zip.d) is a worked
+example.
 
-On macOS, leave Gatekeeper enabled and distribute signed executables. Do not
-perform user interaction, installation, or OS integration from a package.
-
-See [SPEC-RUN.md](../../../SPEC-RUN.md) for the complete contract.
+See [SPEC-RUN.md](https://github.com/hydraulic-software/url/blob/master/SPEC-RUN.md) for the complete contract.
 
 ## Timestamped packages
 
