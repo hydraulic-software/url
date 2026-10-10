@@ -48,10 +48,6 @@ private fun URI.isRemoteTarball(): Boolean = ARCHIVE_SUFFIXES.filterNot { it == 
 
 internal fun URI.isTopLevelRemoteTarball(): Boolean = isRemoteTarball() && parseArchiveURL(this, depth = 1) == null
 
-internal fun URI.hashLockAppliesToArchiveBytes(): Boolean = parseArchiveURL(this)?.let {
-    it.member.isNotEmpty() || rawPath.endsWith('/')
-} == true
-
 private fun decodePathComponent(rawComponent: String): String = URI("https://hydraulic.invalid/$rawComponent").path.removePrefix("/")
 
 internal fun streamedArchiveMetadata(

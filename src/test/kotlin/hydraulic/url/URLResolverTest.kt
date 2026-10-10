@@ -814,6 +814,29 @@ class URLResolverTest : URLTestSupport() {
     }
 
     @Test
+    fun `locked plain files still revalidate stale HTTP responses`() = withServer { server ->
+        val content = "locked response".toByteArray()
+        val headers = mutableListOf<String?>()
+        server.createContext("/locked") { exchange ->
+            headers += exchange.requestHeaders.getFirst("If-None-Match")
+            exchange.responseHeaders.add("Cache-Control", "max-age=0")
+            exchange.responseHeaders.add("ETag", "v1")
+            if (headers.last() == null) {
+                exchange.sendResponseHeaders(200, content.size.toLong())
+                exchange.responseBody.use { it.write(content) }
+            } else {
+                exchange.sendResponseHeaders(304, -1)
+                exchange.close()
+            }
+        }
+        makeCache().use { cache ->
+            val uri = server.uri("/locked#sha256=${content.sha256()}")
+            repeat(2) { URLResolver(cache).resolve(uri).use { assertEquals("locked response", it.path.readText()) } }
+        }
+        assertEquals(listOf(null, "v1"), headers)
+    }
+
+    @Test
     fun `SHA-256 lock requires a complete hexadecimal digest`() {
         makeCache().use { cache ->
             val exception = assertFailsWith<IllegalArgumentException> {

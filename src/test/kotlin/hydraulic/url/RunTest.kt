@@ -30,6 +30,21 @@ import kotlin.test.assertTrue
 
 class RunTest : URLTestSupport() {
     @Test
+    fun `JavaScript context preserves escaped strings and remains frozen`() {
+        val directory = (tempDir / "context-package").createDirectories()
+        val packageFile = directory / "run.js"
+        packageFile.writeText("""
+            if (!Object.isFrozen(context) || !Object.isFrozen(context.args)) throw Error("mutable context");
+            export default { executable: "tool", arguments: [context.ver, ...context.args] };
+        """.trimIndent())
+        val values = listOf("quote\" and backslash\\", "\b\u000C\n\r\t\u0000\u001F", "\u2028\u2029", "emoji \uD83D\uDE00")
+        val plan = evaluateRunJavaScript(packageFile, RunContext("linux", "arm64", values[0], values, directory)) {
+            error("unused")
+        }
+        assertEquals(listOf(values[0]) + values, plan.arguments)
+    }
+
+    @Test
     fun `zsh setup is bounded idempotent and preserves user configuration`() {
         val zshrc = tempDir / ".zshrc"
         zshrc.writeText("export USER_SETTING=kept\n")
