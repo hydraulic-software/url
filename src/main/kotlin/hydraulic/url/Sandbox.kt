@@ -99,3 +99,51 @@ internal fun deleteSandboxTemporaryDirectory(directory: java.nio.file.Path) {
         paths.sorted(Comparator.reverseOrder()).forEach(java.nio.file.Files::deleteIfExists)
     }
 }
+
+internal enum class SandboxBackend(val description: String, val confinesProcess: Boolean) {
+    ENVIRONMENT_ONLY("environment filtering only", false),
+    SEATBELT("macOS Seatbelt", true)
+}
+
+internal fun sandboxBackend(executable: java.nio.file.Path, operatingSystem: String): SandboxBackend =
+    SandboxBackend.ENVIRONMENT_ONLY
+
+internal fun dryRunDescription(plan: LaunchPlan, grant: SandboxGrant?, backend: SandboxBackend): String = buildString {
+    // JSON quoting makes whitespace, quotes and control characters in arguments unambiguous.
+    fun quoted(value: String) = kotlinx.serialization.json.JsonPrimitive(value).toString()
+    appendLine("Executable:  ${quoted(plan.executable.toString())}")
+    appendLine("Arguments:   ${plan.arguments.joinToString(" ") { quoted(it) }}")
+    if (grant == null) {
+        appendLine("Sandbox:     unrestricted")
+        return@buildString
+    }
+    appendLine("Sandbox:     ${grant.revision.date} rules (${backend.description})")
+    appendLine("Permissions:")
+    fun paths(key: String, paths: List<GrantedPath>) {
+        if (key !in grant.requested.declared) return
+        if (paths.isEmpty()) appendLine("  $key  none")
+        paths.forEach { appendLine("  $key  ${quoted(it.path.toString())}${if (it.missing) " (does not exist yet)" else ""}") }
+    }
+    paths("std.files.read", grant.read)
+    paths("std.files.write", grant.write)
+    if ("std.semantics" in grant.requested.declared) appendLine("  std.semantics  ${grant.requested.semantics}")
+    appendLine("  std.network.client  ${grant.requested.networkClient == true}")
+    appendLine("  std.network.server  ${grant.requested.networkServer == true}")
+    if ("std.environment" in grant.requested.declared && grant.requested.environment.isEmpty())
+        appendLine("  std.environment  none")
+    grant.environmentMatches.forEach { (pattern, matches) ->
+        appendLine("  std.environment  ${quoted(pattern)} (matches ${matches.joinToString(" ").ifEmpty { "none" }})")
+    }
+    appendLine("  files, network  ${if (backend.confinesProcess) "enforced" else "not enforced"}")
+    appendLine("  environment  enforced")
+    appendLine("Baseline:")
+    grant.baselineRead.forEach { appendLine("  read, execute  ${quoted(it.toString())}") }
+    appendLine("  read, execute  system libraries, configuration and programs")
+    appendLine("  read, write  private temporary directory ${quoted(grant.temporaryDirectory.toString())}")
+    appendLine("  stdio and controlling terminal")
+    appendLine("  environment  ${grant.environment.keys.sorted().joinToString(" ")}")
+    if (grant.requested.unrecognized.isNotEmpty()) {
+        appendLine("Unrecognized keys (not granted):")
+        grant.requested.unrecognized.sorted().forEach { appendLine("  ${quoted(it)}") }
+    }
+}

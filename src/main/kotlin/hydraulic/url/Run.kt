@@ -39,6 +39,9 @@ class Run(
     @Option(names = ["--install"], description = ["Install the sibling url hard link and zsh integration."])
     var install: Boolean = false
 
+    @Option(names = ["--dry", "-d"], description = ["Print the evaluated launch plan without starting the process."])
+    var dry: Boolean = false
+
     @Mixin
     var resolverOptions: ResolverOptions = ResolverOptions(environment)
 
@@ -98,7 +101,14 @@ class Run(
                     buildSandboxGrant(requested, revision, context, opened.map { it.entryDirectory },
                         temporary, environment, windows)
                 }
-                runResolvedPath(launchExecutable(plan.executable, windows), plan.arguments, grant?.environment ?: environment)
+                val executable = launchExecutable(plan.executable, windows)
+                val backend = sandboxBackend(executable, operatingSystem)
+                if (dry) {
+                    println(dryRunDescription(plan.copy(executable = executable), grant, backend))
+                    0
+                } else {
+                    runResolvedPath(executable, plan.arguments, grant?.environment ?: environment)
+                }
             } finally {
                 try {
                     temporaryDirectory?.let(::deleteSandboxTemporaryDirectory)

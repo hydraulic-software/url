@@ -64,6 +64,11 @@ export default {
         )
         (package / "tool.sh").write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
         (package / "tool.sh").chmod(0o755)
+        dry = subprocess.run([str(RUN), "--progress=never", "--dry", str(package)],
+                             capture_output=True, text=True)
+        check(dry.returncode == 0, f"dry run failed: {dry.stderr}")
+        check("Executable:" in dry.stdout and "unrestricted" in dry.stdout, "dry run plan missing")
+        check("compliance-import\nnone\n" not in dry.stdout, "dry run launched the tool")
         shutil.copytree(package, local, dirs_exist_ok=True)
 
         with zipfile.ZipFile(web / "demo" / "run.zip", "w", zipfile.ZIP_DEFLATED) as archive:

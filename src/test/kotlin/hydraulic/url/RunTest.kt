@@ -38,6 +38,36 @@ class RunTest : URLTestSupport() {
     }
 
     @Test
+    fun `dry run prints plans without launching and validates permissions`() {
+        val directory = (tempDir / "dry-package").createDirectories()
+        (directory / "run.js").writeText("""export default { executable: '/does-not-exist', arguments: context.args,
+            permissions: { 'std.files.write': ['out'], 'std.environment': ['CC_*'], 'std.future': true } };""")
+        val bytes = java.io.ByteArrayOutputStream()
+        val previous = System.out
+        try {
+            System.setOut(java.io.PrintStream(bytes))
+            val run = Run(environment = mapOf("CC_FLAGS" to "flags"))
+            val cli = CommandLine(run).setStopAtPositional(true)
+            assertEquals(0, cli.execute("--dry", "--cache-dir", (tempDir / "dry-cache").toString(), directory.toString(), "-d"))
+            assertTrue(run.dry)
+            assertEquals(listOf("-d"), run.arguments)
+        } finally { System.setOut(previous) }
+        val output = bytes.toString(Charsets.UTF_8)
+        assertContains(output, "Executable:")
+        assertContains(output, "Arguments:   \"-d\"")
+        assertContains(output, "2026-10-10 rules")
+        assertContains(output, "does not exist yet")
+        assertContains(output, "matches CC_FLAGS")
+        assertContains(output, "Baseline:")
+        assertContains(output, "std.future")
+        (directory / "run.js").writeText("export default { executable: 'tool', arguments: [], permissions: null };")
+        assertTrue(CommandLine(Run()).setStopAtPositional(true).execute("-d", "--cache-dir",
+            (tempDir / "invalid-cache").toString(), directory.toString()) != 0)
+        assertContains(dryRunDescription(LaunchPlan(Path.of("tool"), emptyList()), null,
+            SandboxBackend.ENVIRONMENT_ONLY), "unrestricted")
+    }
+
+    @Test
     fun `effective grants resolve paths and retain whole cache entries`() {
         val cwd = (tempDir / "cwd").createDirectories()
         val packageDir = (tempDir / "package").createDirectories()
