@@ -1,29 +1,32 @@
 import { graalvm } from "./graalvm.js";
 import { parseArgs } from "./parse-args.js";
-import { hasPathSeparator, isAbsolutePath } from "./utils.js";
+import { hasPathSeparator, looksLikeLocalPath } from "./utils.js";
 
-// Hash locking for extra security against supply chain attacks: this will catch the case where the uploaded JAR changes unexpectedly.
+// Most of this file is concerned with really making things very secure. A simpler version of this script is easy.
+
+// Step 1. Hash locking to block simple hacks that swap out an already released version for a modified file.
+// If we don't recognize the version the user requested, we'll skip this check.
 const ver = context.ver ?? "0.3.1";
 const hashes = {
   "0.3.1": "ca0dd45cf6d49c474663d2e802d69b2c756d301c3d64e956a458f7db29b43c18",
 };
 const lock = hashes[ver] ? `#sha256=${hashes[ver]}` : "";
+
+// Kick off the downloads.
 const java = graalvm();
 const jinfer = url(`https://repo.maven.apache.org/maven2/com/qxotic/jinfer-cli/${ver}/jinfer-cli-${ver}.jar${lock}`);
 
-// Keep cache-derived JVM arguments near the top so model storage and temporary files share jinfer's private cache.
+// Step 2. Relocate the model cache and use of tmp so jinfer doesn't need read/write permissions to the global /tmp directory.
 const cache = `${context.cacheDir}/ai.qxotic.jinfer`;
 const cacheArguments = [
   `-Djinfer.models=${cache}/models`,
   `-Djava.io.tmpdir=${cache}`,
 ];
 
-// Sandboxing: request only the file and network access this invocation needs.
+// Step 3. Sandboxing: parse the command line arguments and figure out the truly minimal set of permissions needed for this run.
 const read = new Set();
 const write = new Set([cache]);
 const commands = new Set(["instruct", "prompt", "chat", "server", "serve", "speak", "transcribe"]);
-
-// Parse the original CLI args once so permission logic can use named options and positionals.
 const parsed = parseArgs(context.args, {
   strict: false,
   allowPositionals: true,
@@ -48,33 +51,16 @@ function optionValues(value) {
   return [];
 }
 
-function hasFilenameExtension(pathParts) {
-  const filename = pathParts[pathParts.length - 1];
-  const dot = filename.lastIndexOf(".");
-  return dot > 0 && dot < filename.length - 1;
-}
-
-function isLocalPath(value) {
-  if (!value || value === "-" || value.includes("://")) return false;
-  // run.js cannot check whether a path exists, so recognize explicit paths and common filenames.
-  // Use ./ or an absolute path when a nested path could also look like a hub reference.
-  if (isAbsolutePath(value)) return true;
-  if (["./", "../", ".\\", "..\\"].some(prefix => value.startsWith(prefix))) return true;
-
-  const pathParts = value.split(/[\\/]/);
-  return hasFilenameExtension(pathParts) && pathParts.length <= 2;
-}
-
-function addLocalRead(value) {
+function maybeAddLocalRead(value) {
   // Hub references contain a slash; a bare model or companion name is a local file.
-  if (isLocalPath(value) || (value && !hasPathSeparator(value))) read.add(value);
+  if (looksLikeLocalPath(value) || (value && !hasPathSeparator(value))) read.add(value);
 }
 
 // Jinfer accepts model and companion values in either --name value or --name=value form.
-for (const model of optionValues(parsed.values.model)) addLocalRead(model);
+for (const model of optionValues(parsed.values.model)) maybeAddLocalRead(model);
 for (const companionOption of optionValues(parsed.values.with)) {
   const companion = companionOption.split("=", 2)[1];
-  addLocalRead(companion);
+  maybeAddLocalRead(companion);
 }
 
 // Prompt caches are read and written; read-only caches only need read permission.

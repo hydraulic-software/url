@@ -7,6 +7,23 @@ export function hasPathSeparator(value) {
   return value.includes("/") || value.includes("\\");
 }
 
+/**
+ * Heuristically recognizes CLI values that look like local paths without filesystem access.
+ * Bare values with a filename extension are accepted up to `maxSegments`; longer slash-separated
+ * values are left for tools that use them as remote identifiers.
+ */
+export function looksLikeLocalPath(value, { maxSegments = 2 } = {}) {
+  if (typeof value !== "string" || !value || value === "-" || value.includes("://")) return false;
+  if (isAbsolutePath(value)) return true;
+  if (["./", "../", ".\\", "..\\"].some(prefix => value.startsWith(prefix))) return true;
+
+  const pathParts = value.split(/[\\/]/);
+  const filename = pathParts[pathParts.length - 1];
+  const dot = filename.lastIndexOf(".");
+  const hasFilenameExtension = dot > 0 && dot < filename.length - 1;
+  return hasFilenameExtension && pathParts.length <= maxSegments;
+}
+
 /** Recognizes POSIX, root-relative Windows, and drive-absolute paths without filesystem access. */
 export function isAbsolutePath(value) {
   if (value.startsWith("/") || value.startsWith("\\")) return true;
