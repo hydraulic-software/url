@@ -36,12 +36,87 @@ class RunTest : URLTestSupport() {
         return destination.resolve("run.js").toAbsolutePath()
     }
 
+    private fun jinferPlan(args: List<String>, cacheDir: Path): LaunchPlan {
+        val script = samplePackage("jinfer")
+        return evaluateRunJavaScript(script,
+            RunContext("macos", "arm64", null, args, script.parent, cacheDir = cacheDir)) { location ->
+            tempDir / if ("jinfer-cli" in location) "jinfer.jar" else "java"
+        }
+    }
+
     private fun permissionsPlan(permissions: String?): LaunchPlan {
         val directory = (tempDir / "permissions-package").createDirectories()
         val file = directory / "run.js"
         file.writeText("export default { executable: 'tool', arguments: []" +
             (permissions?.let { ", permissions: $it" } ?: "") + " };")
         return evaluateRunJavaScript(file, RunContext("linux", "arm64", null, emptyList(), directory)) { error("unused") }
+    }
+
+    @Test
+    fun `jinfer sample requests its cache and network permissions`() {
+        val args = listOf("instruct", "-m", "hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0", "Say hello.")
+        val cacheDir = tempDir / "cache with spaces"
+        val plan = jinferPlan(args, cacheDir)
+
+        val appCache = cacheDir / "ai.qxotic.jinfer"
+        assertEquals(listOf(appCache.toString()), plan.permissions?.write)
+        assertEquals(true, plan.permissions?.networkClient)
+        assertEquals(emptyList(), plan.permissions?.read)
+        assertEquals(false, plan.permissions?.networkServer)
+        assertEquals(setOf("std.files.write", "std.network.client", "std.network.server"), plan.permissions?.declared)
+        assertEquals("-Djinfer.models=${appCache}/models", plan.arguments[0])
+        assertEquals("-Djava.io.tmpdir=$appCache", plan.arguments[1])
+        assertEquals(args, plan.arguments.takeLast(args.size))
+    }
+
+    @Test
+    fun `jinfer sample grants local transcription inputs models and caches`() {
+        val plan = jinferPlan(listOf("transcribe", "-m", "./parakeet.gguf", "--with", "tokenizer=../tokenizer.gguf",
+            "recording.wav", "--cache-ro", "prompt.jkv"), tempDir / "cache")
+
+        assertEquals(listOf("./parakeet.gguf", "../tokenizer.gguf", "prompt.jkv", "recording.wav"), plan.permissions?.read)
+        assertEquals(listOf((tempDir / "cache/ai.qxotic.jinfer").toString()), plan.permissions?.write)
+    }
+
+    @Test
+    fun `jinfer sample grants speech output and local companion paths`() {
+        val plan = jinferPlan(listOf("speak", "--model=inflect.gguf", "--with=lexicon=lexicon",
+            "--output=hello.wav", "Hello world."), tempDir / "cache")
+
+        assertEquals(listOf("inflect.gguf", "lexicon"), plan.permissions?.read)
+        assertEquals(listOf((tempDir / "cache/ai.qxotic.jinfer").toString(), "hello.wav"), plan.permissions?.write)
+        assertEquals(false, plan.permissions?.networkServer)
+    }
+
+    @Test
+    fun `jinfer sample grants its server socket only for server commands`() {
+        val plan = jinferPlan(listOf("server", "-m", "hf.co/owner/model:Q4_K_M", "--cache", "server.jkv"), tempDir / "cache")
+
+        assertEquals(true, plan.permissions?.networkServer)
+        assertEquals(listOf((tempDir / "cache/ai.qxotic.jinfer").toString(), "server.jkv"), plan.permissions?.write)
+        assertEquals(emptyList(), plan.permissions?.read)
+    }
+
+    @Test
+    fun `platform cache root follows platform conventions without creating it`() {
+        val home = tempDir / "user"
+        val xdgOverride = tempDir / "xdg-cache"
+        val localOverride = tempDir / "local-app-data"
+        val cases = listOf(
+            Triple("macos", emptyMap(), home / "Library/Caches"),
+            Triple("linux", emptyMap(), home / ".cache"),
+            Triple("freebsd", mapOf("XDG_CACHE_HOME" to xdgOverride.toString()), xdgOverride),
+            Triple("android", mapOf("XDG_CACHE_HOME" to "relative"), home / ".cache"),
+            Triple("windows", emptyMap(), home / "AppData/Local"),
+            Triple("windows", mapOf("localappdata" to localOverride.toString()), localOverride),
+        )
+        cases.forEach { (os, environment, expected) ->
+            val actual = userCacheDirectory(os, home, environment)
+            assertEquals(expected.toAbsolutePath().normalize(), actual)
+            assertFalse(Files.exists(actual))
+        }
+        assertEquals(home.resolve("Library/Caches").toAbsolutePath().normalize(),
+            userCacheDirectory("macos", home, mapOf("XDG_CACHE_HOME" to xdgOverride.toString())))
     }
 
     private fun seatbeltTool(executable: String, arguments: List<String>, permissions: String): Pair<Int, String> {
@@ -358,14 +433,19 @@ class RunTest : URLTestSupport() {
         val packageFile = directory / "run.js"
         packageFile.writeText("""
             if (!Object.isFrozen(context) || !Object.isFrozen(context.args)) throw Error("mutable context");
-            export default { executable: "tool", arguments: [context.cwd, context.ver, ...context.args] };
+            try { context.cacheDir = "changed"; throw Error("mutable cacheDir"); } catch (e) {
+                if (e.message === "mutable cacheDir") throw e;
+            }
+            export default { executable: "tool", arguments: [context.cwd, context.ver, context.cacheDir, ...context.args] };
         """.trimIndent())
         val values = listOf("quote\" and backslash\\", "\b\u000C\n\r\t\u0000\u001F", "\u2028\u2029", "emoji \uD83D\uDE00")
-        val plan = evaluateRunJavaScript(packageFile, RunContext("linux", "arm64", values[0], values, directory)) {
+        val cacheDir = tempDir / "escaped cache"
+        val plan = evaluateRunJavaScript(packageFile,
+            RunContext("linux", "arm64", values[0], values, directory, cacheDir = cacheDir)) {
             error("unused")
         }
         assertTrue(Path.of(plan.arguments.first()).isAbsolute)
-        assertEquals(listOf(values[0]) + values, plan.arguments.drop(1))
+        assertEquals(listOf(values[0], cacheDir.toString()) + values, plan.arguments.drop(1))
     }
 
     @Test

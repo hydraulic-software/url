@@ -51,6 +51,13 @@ The implementation supplies one immutable `context` object:
 * `context.args`: arguments passed after the locator.
 * `context.packageDir`: the absolute path to the directory containing `run.js`.
 * `context.cwd`: the absolute path of the working directory `run` was started in.
+* `context.cacheDir`: the absolute user cache root. macOS uses
+  `~/Library/Caches`; Windows uses an absolute `LOCALAPPDATA` value when set,
+  otherwise `~/AppData/Local`; other systems use an absolute `XDG_CACHE_HOME`
+  value when set, otherwise `~/.cache`. The host only reports this path: it
+  does not create it or grant access. Packages should put application data in
+  their own reverse-DNS subdirectory and request `std.files.write` for that
+  path. This path is separate from the resolver's `--cache-dir`.
 
 The host supplies the asynchronous `url`, `urls`, and `compose` functions. They
 may be called any number of times. Each returns a promise and starts its work

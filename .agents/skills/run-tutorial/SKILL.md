@@ -55,6 +55,12 @@ available.
 variables, native APIs, processes, or threads. Use a separate downloaded or
 packaged executable for behavior that belongs in the launched program.
 
+The immutable `context.cacheDir` value is the platform's user cache root. It
+does not create a directory or grant access. Put persistent application data in
+an application-specific reverse-DNS subdirectory and request
+`std.files.write` for that path; write access includes reads. This is separate
+from the resolver's own cache directory.
+
 ## Dynamic permissions and dry runs
 
 Add a `permissions` object to the launch plan to request confinement. Omit it

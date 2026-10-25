@@ -8,6 +8,8 @@ declare const context: Readonly<{
     args: readonly string[];
     packageDir: string;
     cwd: string;
+    /** Platform cache root. Access requires an explicit file permission. */
+    cacheDir: string;
 }>;
 
 type UrlInput = string | readonly string[];

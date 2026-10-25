@@ -76,6 +76,7 @@ class Run(
                     ver = target.version,
                     args = arguments,
                     cwd = Path.of("").toAbsolutePath(),
+                    cacheDir = userCacheDirectory(operatingSystem, environment = environment),
                     packageDir = packagePath.toRealPath().parent ?: error("run.js must have a parent directory")
                 )
                 val timestamp = verifyRunPackage(context.packageDir)

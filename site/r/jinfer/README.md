@@ -32,11 +32,25 @@ Oracle GraalVM 25 archives: 25.0.4 on Linux x64/ARM64, macOS ARM64 and Windows
 x64; 25.0.1 (Oracle's last Intel Mac release) on macOS x64. Other platforms fail
 before downloading.
 
-`--help` and `--version` do not download models. Inference with a hub reference
-downloads models on first use into jinfer's own cache; use local model paths
-for offline inference. This sample runs with the user's normal permissions,
-allowing jinfer to manage its model cache, read input files, write audio and
-serve HTTP. Inspect the launch plan without starting Java:
+The launch plan stores jinfer's models and lock files under
+`context.cacheDir/ai.qxotic.jinfer`, using `-Djinfer.models` to keep model files
+out of the shared Hugging Face cache and `-Djava.io.tmpdir` for jinfer's locks.
+It requests write access to that application-specific directory and outbound
+network access, so jinfer can download models itself. macOS uses the
+DNS-style `ai.qxotic.jinfer` directory under `~/Library/Caches`; other platforms
+use their normal cache root. The host does not create or grant access to
+`context.cacheDir` implicitly.
+
+The launcher requests read access for recognizable local model and companion
+paths, prompt caches opened with `--cache-ro`, and the audio file passed to
+`transcribe`. `--cache` and `speak --output` request write access to their
+named paths. Use `./` or an absolute path for nested local models and
+companions so they are distinguishable from hub references. The `server` and
+`serve` commands also request permission to open a listening socket; other
+commands do not. Permissions are derived from the CLI arguments. On macOS,
+Seatbelt enforces the file and network grants for this JVM; other platforms
+currently enforce environment filtering only. Inspect the launch plan without
+starting Java:
 
 ```shell
 run -d ./build/run-packages/jinfer/run.zip.d instruct -m ./model.gguf "Hello."
