@@ -102,6 +102,7 @@ samplesDirectory.asFile.listFiles().orEmpty()
                 classpath = mainRuntimeClasspath
                 mainClass.set("hydraulic.url.RunKt")
                 args(
+                    "--no-gatekeeper",
                     sampleOutput.get().file("make-run-zip/run.zip.d").asFile.absolutePath,
                     packageSource.get().asFile.absolutePath,
                     packageArchive.get().asFile.absolutePath
@@ -116,4 +117,20 @@ samplesDirectory.asFile.listFiles().orEmpty()
 tasks.withType<Test>().configureEach {
     dependsOn(assembleRunSamples)
     systemProperty("run.samples.directory", sampleOutput.get().asFile.absolutePath)
+}
+
+// Keep networked tests that launch packaged tools out of the default, hermetic test suite.
+plugins.withId("org.jetbrains.kotlin.jvm") {
+    val testSourceSet = extensions.getByType<SourceSetContainer>().named("test")
+    tasks.named<Test>("test") {
+        useJUnitPlatform { excludeTags("run-sample-integration") }
+    }
+    tasks.register<Test>("integrationTest") {
+        group = "verification"
+        description = "Packages and runs every run.zip sample through the run CLI."
+        dependsOn(packageRunSamples)
+        testClassesDirs = testSourceSet.get().output.classesDirs
+        classpath = testSourceSet.get().runtimeClasspath
+        useJUnitPlatform { includeTags("run-sample-integration") }
+    }
 }

@@ -44,6 +44,14 @@ Prefer focused tests while iterating:
 ./gradlew test --tests hydraulic.url.URLResolverTest
 ```
 
+Run the packaged-sample integration suite separately when changing run samples
+or their packaging. It builds every timestamped `run.zip` and executes each one
+through `run --no-gatekeeper`:
+
+```sh
+./gradlew integrationTest
+```
+
 ## Contribution guidance
 
 - Stage newly created files with `git add` by default. Leave files unstaged when the user explicitly asks for that.
@@ -53,16 +61,22 @@ Prefer focused tests while iterating:
   create it with `make-run-zip`, not a Gradle ZIP task.
 - Preserve the output contract: successful paths go only to stdout; progress
   and diagnostics go only to stderr.
+- To inspect a remote resource or archive layout, use this repository's `url`
+  command. Resolve an archive URL with a trailing slash to inspect its extracted
+  directory, or append `/member/path` to resolve a specific archive member; do
+  not guess the archive's internal root directory.
 - Add or update tests for every observable behavior change, especially URL
   parsing, caching, archive fallback, hash locks, proxy behavior, and CLI exit
   codes.
-- Keep tests hermetic. Use `@TempDir` and the test-local HTTP server helpers;
+- Keep the default test suite hermetic. Use `@TempDir` and the test-local HTTP server helpers;
   do not depend on public network services, except that RFC 3161 timestamp
   authority (TSA) requests are free, so timestamped-package tests should use a
   real TSA instead of mocking the TSA interaction. The jinfer run.zip
   integration test also installs its locked npm dependency and resolves the
   pinned esbuild binary so it can test the actual archive produced by
-  `make-run-zip`.
+  `make-run-zip`. The separately invoked `integrationTest` task intentionally
+  packages and executes every sample archive, including their real network
+  downloads; run it when those sample packages change.
 - Maintain cross-platform behavior. Guard POSIX- and macOS-specific assertions
   and retain Windows `run.ps1` handling.
 - `url` inputs without a scheme imply HTTPS. Do not change that normalization

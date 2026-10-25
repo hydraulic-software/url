@@ -49,6 +49,11 @@ export function graalvm(version = "25.0.4+7.1") {
 }
 ```
 
+When the needed file is inside an archive, include its path after the archive
+URL in the `url()` argument and return that promise directly. Do not await the
+archive root and append the member path afterward; returning the member URL
+promise lets `run.js` start resolving other dependencies at the same time.
+
 * **Don't use top-level `await`, or call `url()` at module scope, in helper modules.**
   Importing a helper should never start a download. Functions can take parameters,
   where modules can't, and concurrency shouldn't depend on how modules happen to

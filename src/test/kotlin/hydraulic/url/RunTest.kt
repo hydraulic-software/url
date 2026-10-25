@@ -1200,6 +1200,29 @@ class RunTest : URLTestSupport() {
     }
 
     @Test
+    fun `esbuild wasm sample resolves GraalWasm inside its archive root`() {
+        val packageFile = samplePackage("esbuild-wasm")
+        val wasm = tempDir.resolve("wasm")
+        val esbuild = tempDir.resolve("esbuild.wasm")
+        val urls = mutableListOf<String>()
+
+        val plan = evaluateRunJavaScript(
+            packageFile,
+            RunContext("macos", "arm64", null, listOf("--help"), packageFile.parent, cwd = packageFile.parent)
+        ) { location ->
+            urls += location
+            if ("gds.oracle.com" in location) wasm else esbuild
+        }
+
+        assertContains(
+            urls.single { "gds.oracle.com" in it },
+            "graalwasm-25.0.0-macos-aarch64.tar.gz/graalwasm-25.0.0-macos-aarch64/bin/wasm"
+        )
+        assertEquals(wasm, plan.executable)
+        assertEquals(listOf("--wasm.WasiMapDirs=/work::${packageFile.parent}", esbuild.toString(), "--help"), plan.arguments)
+    }
+
+    @Test
     fun `JavaScript packages cannot access host classes or IO`() {
         val directory = (tempDir / "run.zip.d").createDirectories()
         val packageFile = directory / "run.js"
