@@ -85,6 +85,35 @@ through `run --no-gatekeeper`:
 - Website-only changes belong under `site/`; avoid altering CLI code or build
   configuration unless the change needs it.
 
+## Commit messages
+
+Commits should have three parts, the prefix, the summary and more detail when justified (e.g. explain why we're making 
+a change, not just what changed, or provide a list of subcomponents of a commit). Example:
+
+```
+Fix: Allow scoped POSIX IPC and PTYs in Seatbelt.
+
+This is a common need for UNIX apps, and especially GraalVM native images that use semaphores.
+```
+
+or
+
+```
+Feature: Add a new package for foobar
+
+- Extract common code to utils.js
+- Ensure foobar is properly sandboxed.
+
+Foobar can use various files, so we take care to verify what's required against upstream rules.
+```
+
+Other prefixes:
+
+- Test: 
+- Docs:
+- Refactor:
+- Build:
+
 ## Before handing off
 
 Run the narrowest relevant Gradle test task. Run the complete test suite for
