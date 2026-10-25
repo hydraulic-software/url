@@ -1,3 +1,2 @@
 graalvm.js
-parse-args.js
 utils.js

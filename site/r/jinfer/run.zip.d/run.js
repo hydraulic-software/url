@@ -1,5 +1,5 @@
 import { graalvm } from "./graalvm.js";
-import { parseArgs } from "./parse-args.js";
+import { parseArgs } from "@pkgjs/parseargs";
 import { hasPathSeparator, looksLikeLocalPath } from "./utils.js";
 
 // Most of this file is concerned with really making things very secure. A simpler version of this script is easy.
@@ -27,16 +27,22 @@ const cacheArguments = [
 const read = new Set();
 const write = new Set([cache]);
 const commands = new Set(["instruct", "prompt", "chat", "server", "serve", "speak", "transcribe"]);
-const parsed = parseArgs(context.args, {
+// Node's parseArgs treats -m=value differently from many CLIs, so normalize the two aliases first.
+const parserArgs = context.args.flatMap(argument => {
+  const match = /^-([mo])=(.*)$/.exec(argument);
+  return match ? [`-${match[1]}`, match[2]] : [argument];
+});
+const parsed = parseArgs({
+  args: parserArgs,
   strict: false,
   allowPositionals: true,
   options: {
     model: { type: "string", short: "m", multiple: true },
     with: { type: "string", multiple: true },
-    cache: { type: "string" },
-    "cache-ro": { type: "string" },
-    output: { type: "string", short: "o" },
-    threads: { type: "string", short: "t" },
+    cache: { type: "string", multiple: true },
+    "cache-ro": { type: "string", multiple: true },
+    output: { type: "string", short: "o", multiple: true },
+    threads: { type: "string" },
     theme: { type: "string" },
     color: { type: "string" },
     port: { type: "string" },

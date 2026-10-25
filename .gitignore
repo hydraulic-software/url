@@ -1,5 +1,7 @@
 .gradle/
 .kotlin/
 build/
+site/r/jinfer/run.zip.d/node_modules/
+site/r/*/run.zip
 generated.factory.conf
 .idea/

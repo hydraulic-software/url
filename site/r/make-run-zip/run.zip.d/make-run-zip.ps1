@@ -5,7 +5,8 @@ $ErrorActionPreference = "Stop"
 # the user's source directory, output path, and optional TSA URL.
 $openssl = $args[0]
 $zip = $args[1]
-$remaining = @($args | Select-Object -Skip 2)
+$esbuild = $args[2]
+$remaining = @($args | Select-Object -Skip 3)
 
 $source = if ($remaining.Count -ge 1) { $remaining[0] } else { "." }
 $output = if ($remaining.Count -ge 2) { $remaining[1] } else { "run.zip" }
@@ -31,9 +32,13 @@ $env:OPENSSL_MODULES = Join-Path $opensslBinDir "..\lib\ossl-modules"
 # before enumeration so hashing and archiving cannot follow paths outside the
 # source tree. context.d.ts is an intentionally excluded compatibility file.
 $contextDeclaration = Join-Path $source "context.d.ts"
+$bundleDependencies = (Test-Path -LiteralPath (Join-Path $source "run.js") -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $source "node_modules") -PathType Container)
+$nodeModulesWithSeparator = (Join-Path $source "node_modules").TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 $reparsePoint = Get-ChildItem -LiteralPath $source -Recurse -Force | Where-Object {
     ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -and
-    $_.FullName -ne $contextDeclaration
+    $_.FullName -ne $contextDeclaration -and
+    -not ($bundleDependencies -and $_.FullName.StartsWith($nodeModulesWithSeparator, [StringComparison]::OrdinalIgnoreCase))
 } | Select-Object -First 1
 if ($null -ne $reparsePoint) {
     throw "Source directory contains unsupported symbolic links: $($reparsePoint.FullName)"
@@ -46,6 +51,7 @@ $manifest = Join-Path $timestampDirectory "manifest"
 $request = Join-Path $timestampDirectory "timestamp.tsq"
 $response = Join-Path $timestampDirectory "timestamp.tsr"
 $temporaryOutput = "$output.tmp"
+$packageSource = $source
 
 function Invoke-Zip([string[]] $arguments) {
     # Archive tools write progress to stdout. Forward it to stderr so the
@@ -55,21 +61,38 @@ function Invoke-Zip([string[]] $arguments) {
 }
 
 try {
+    if ($bundleDependencies) {
+        $packageSource = Join-Path $timestampDirectory "package"
+        New-Item -ItemType Directory -Path $packageSource | Out-Null
+        Get-ChildItem -LiteralPath $source -Force | Copy-Item -Destination $packageSource -Recurse -Force
+
+        [Console]::Error.WriteLine("Bundling run.js and installed JavaScript dependencies with esbuild")
+        $bundle = Join-Path $timestampDirectory "run.bundle.js"
+        & $esbuild (Join-Path $packageSource "run.js") `
+            --bundle --format=esm --platform=neutral --main-fields=module,main --define:global=globalThis `
+            "--outfile=$bundle"
+        if ($LASTEXITCODE -ne 0) { throw "esbuild failed with exit code $LASTEXITCODE" }
+        Move-Item -LiteralPath $bundle -Destination (Join-Path $packageSource "run.js") -Force
+        Remove-Item -LiteralPath (Join-Path $packageSource "node_modules") -Recurse -Force
+        Remove-Item -LiteralPath (Join-Path $packageSource "package.json"), (Join-Path $packageSource "package-lock.json") `
+            -Force -ErrorAction SilentlyContinue
+    }
+
     # Build the same canonical manifest used by verifiers. It is temporary and
     # is intentionally not added to the package.
-    $files = Get-ChildItem -LiteralPath $source -File -Recurse -Force | Where-Object {
+    $files = Get-ChildItem -LiteralPath $packageSource -File -Recurse -Force | Where-Object {
         $_.Name -ne "context.d.ts" -and
         $_.Name -ne "timestamp.tsr"
     }
-    if (Get-ChildItem -LiteralPath $source -File -Recurse -Force | Where-Object Name -eq "timestamp.tsr") {
+    if (Get-ChildItem -LiteralPath $packageSource -File -Recurse -Force | Where-Object Name -eq "timestamp.tsr") {
         throw "Source directory may not contain a file named timestamp.tsr"
     }
     $files = $files | Sort-Object {
-        $relative = $_.FullName.Substring($source.Length + 1).Replace('\', '/')
+        $relative = $_.FullName.Substring($packageSource.Length + 1).Replace('\', '/')
         [String]::Join("", ([Text.Encoding]::UTF8.GetBytes($relative) | ForEach-Object { $_.ToString("X2") }))
     }
     $lines = foreach ($file in $files) {
-        $relative = $file.FullName.Substring($source.Length + 1).Replace('\', '/')
+        $relative = $file.FullName.Substring($packageSource.Length + 1).Replace('\', '/')
         if ($relative.Contains("`n") -or $relative.Contains("`r")) {
             throw "Source file names may not contain newlines: $relative"
         }
@@ -81,7 +104,7 @@ try {
 
     # Create the ordinary ZIP before adding the timestamp entry. The timestamp
     # is over the manifest, so changing ZIP metadata does not invalidate it.
-    Push-Location $source
+    Push-Location $packageSource
     try {
         Invoke-Zip @("-X", "-r", $temporaryZip, ".", "-x", "context.d.ts", "*/context.d.ts", "timestamp.tsr")
     } finally {

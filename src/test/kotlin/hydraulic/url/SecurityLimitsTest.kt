@@ -87,7 +87,7 @@ class SecurityLimitsTest {
         val source = directory.resolve("source").createDirectories()
         source.resolve("a\\b.js").writeText("payload")
         val process = ProcessBuilder("sh", "site/r/make-run-zip/run.zip.d/make-run-zip.sh", "unused",
-            source.toString(), directory.resolve("run.zip").toString()).redirectErrorStream(true).start()
+            "unused-esbuild", source.toString(), directory.resolve("run.zip").toString()).redirectErrorStream(true).start()
         val output = process.inputStream.bufferedReader().readText()
         assertEquals(2, process.waitFor())
         assertContains(output, "backslashes")

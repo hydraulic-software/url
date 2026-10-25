@@ -10,6 +10,17 @@ The source directory is archived with its contents at the archive root. Files
 named `context.d.ts` are omitted. The output path defaults to `run.zip` in the
 current working directory and must be outside the source directory.
 
+When the source has a root `run.js` and an installed `node_modules` directory,
+the builder first bundles `run.js` and its dependencies with esbuild, then
+removes `node_modules`, `package.json`, and `package-lock.json` from the archive.
+This lets the source use npm packages, including CommonJS packages, while the
+resulting launcher stays a single ECMAScript module without npm build metadata.
+Run `npm install` in the source directory first so esbuild can resolve those
+packages. The source directory is left unchanged. The pinned esbuild executable
+is resolved through `run` on every invocation and reused from the cache; the
+builder only invokes it when `node_modules` is present.
+Packages without a root `run.js` or `node_modules` are archived as-is.
+
 The command adds a top-level `timestamp.tsr` entry containing a binary RFC 3161
 timestamp response. The response covers a canonical manifest of the other
 files; the manifest is generated temporarily and is not included in the archive.

@@ -2,7 +2,8 @@
 set -eu
 
 fallback_zip=$1
-shift
+esbuild=$2
+shift 2
 
 source=${1:-.}
 output=${2:-run.zip}
@@ -67,10 +68,6 @@ temporary_output="$output.tmp"
 trap 'rm -rf -- "$temporary_zip" "$timestamp_directory" "$temporary_output"' EXIT HUP INT TERM
 rm -f -- "$temporary_zip" "$temporary_output"
 
-if find "$source" -type l ! -path "$source/context.d.ts" -print -quit | grep -q .; then
-  echo "Source directory contains unsupported symbolic links" >&2
-  exit 2
-fi
 if ! find "$source" -type f -exec sh -c '
   newline=$(printf "\nX")
   newline=${newline%X}
@@ -94,16 +91,53 @@ if find "$source" -name timestamp.tsr -print -quit | grep -q .; then
   exit 2
 fi
 
+package_source=$source
+bundle_dependencies=false
+if [ -f "$source/run.js" ] && [ -d "$source/node_modules" ]; then
+  bundle_dependencies=true
+  if find "$source" -type l \
+    ! -path "$source/context.d.ts" \
+    ! -path "$source/node_modules" \
+    ! -path "$source/node_modules/*" \
+    -print -quit | grep -q .; then
+    echo "Source directory contains unsupported symbolic links" >&2
+    exit 2
+  fi
+else
+  if find "$source" -type l ! -path "$source/context.d.ts" -print -quit | grep -q .; then
+    echo "Source directory contains unsupported symbolic links" >&2
+    exit 2
+  fi
+fi
+
+if [ "$bundle_dependencies" = true ]; then
+  package_source="$timestamp_directory/package"
+  mkdir -p "$package_source"
+  cp -R "$source"/. "$package_source"/
+
+  echo "Bundling run.js and installed JavaScript dependencies with esbuild" >&2
+  bundle="$timestamp_directory/run.bundle.js"
+  "$esbuild" "$package_source/run.js" \
+    --bundle --format=esm --platform=neutral --main-fields=module,main --define:global=globalThis \
+    --outfile="$bundle"
+  mv -f "$bundle" "$package_source/run.js"
+  rm -rf -- "$package_source/node_modules"
+  rm -f -- "$package_source/package.json" "$package_source/package-lock.json"
+fi
+
 (
-  cd "$source"
+  cd "$package_source"
   find . -type f ! -name context.d.ts ! -name timestamp.tsr -print
 ) | LC_ALL=C sort | while IFS= read -r file; do
   relative=${file#./}
-  digest=$("$openssl" dgst -sha256 "$source/$relative" | sed 's/^.*= //')
+  digest=$("$openssl" dgst -sha256 "$package_source/$relative" | sed 's/^.*= //')
   printf '%s  %s\n' "$digest" "$relative"
 done > "$manifest"
 
-create_archive "$temporary_zip"
+(
+  cd "$package_source"
+  create_archive "$temporary_zip"
+)
 
 # Ask the TSA to include its signer certificate so verifiers can check the
 # CMS signature without needing a separate certificate download.

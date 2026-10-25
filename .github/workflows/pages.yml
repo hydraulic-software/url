@@ -35,14 +35,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-      # Assemble sample sources with their shared helpers, then publish each
-      # self-contained ZIP beside its source directory.
+      # Assemble, package and publish each self-contained run.zip.
       - name: Package run tools
-        run: |
-          ./gradlew packageRunSamples
-          for package in build/run-packages/*; do
-            cp "$package/run.zip" "site/r/$(basename "$package")/run.zip"
-          done
+        run: ./gradlew publishRunSamples
       # Agent skills are authored in .agents/skills. Publish each as browsable
       # files and as a ZIP whose top-level directory is the skill's name.
       - name: Package agent skills

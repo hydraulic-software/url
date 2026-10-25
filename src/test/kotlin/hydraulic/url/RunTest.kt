@@ -29,6 +29,8 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class RunTest : URLTestSupport() {
+    private val jinferRunZip: Path by lazy { createJinferRunZip() }
+
     private fun samplePackage(name: String): Path {
         val destination = tempDir / name / "run.zip.d"
         val source = Path.of(System.getProperty("run.samples.directory"), name, "run.zip.d")
@@ -36,12 +38,80 @@ class RunTest : URLTestSupport() {
         return destination.resolve("run.js").toAbsolutePath()
     }
 
-    private fun jinferPlan(args: List<String>, cacheDir: Path): LaunchPlan {
-        val script = samplePackage("jinfer")
-        return evaluateRunJavaScript(script,
-            RunContext("macos", "arm64", null, args, script.parent, cacheDir = cacheDir)) { location ->
-            tempDir / if ("jinfer-cli" in location) "jinfer.jar" else "java"
+    private fun createJinferRunZip(): Path {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+        val toolsAvailable = ProcessBuilder(
+            "/bin/sh", "-c", "command -v zip >/dev/null && command -v openssl >/dev/null && command -v curl >/dev/null && command -v npm >/dev/null"
+        ).start().waitFor() == 0
+        assumeTrue(toolsAvailable, "This run.zip integration test requires npm, zip, OpenSSL, and curl")
+
+        val source = tempDir / "jinfer-zip-source"
+        Path.of(System.getProperty("run.samples.directory"), "jinfer", "run.zip.d")
+            .toFile().copyRecursively(source.toFile(), overwrite = true)
+
+        val npm = ProcessBuilder("npm", "ci", "--prefix", source.toString()).apply {
+            environment()["npm_config_cache"] = tempDir.resolve("npm-cache").toString()
+            redirectErrorStream(true)
+        }.start()
+        val npmOutput = npm.inputStream.bufferedReader().use { it.readText() }
+        assertEquals(0, npm.waitFor(), npmOutput)
+
+        val (esbuildPackage, esbuildHash) = when ("${Platform.os}-${runArchitecture()}") {
+            "linux-x86_64" -> "linux-x64" to "9573bb2233aab0f9ea7647d5cca9726113cc1768de61d66b17267f4db84488f6"
+            "linux-arm64" -> "linux-arm64" to "a96dbfa41d3ef5dbd1ef22b1c10d5187be9267e86093a870f06402a7ec931596"
+            "macos-x86_64" -> "darwin-x64" to "abb6a7a895aaf2cc0df36fecc3bf0042479ffec51a643a056d54e9109f27db55"
+            "macos-arm64" -> "darwin-arm64" to "1980cde09749094452b20d36ff267585ccb3f72749c7bc97291cd9996ccf5a2a"
+            else -> {
+                assumeTrue(false, "No pinned esbuild binary for ${Platform.os}-${runArchitecture()}")
+                error("unreachable")
+            }
         }
+        val esbuildUrl = java.net.URI(
+            "https://registry.npmjs.org/@esbuild/$esbuildPackage/-/$esbuildPackage-0.28.2.tgz/package/bin/esbuild#sha256=$esbuildHash"
+        )
+        val esbuild = tempDir.resolve("esbuild")
+        makeCache(tempDir.resolve("esbuild-cache")).use { cache ->
+            URLResolver(cache, gatekeeper = false).resolve(esbuildUrl).use { resolved ->
+                Files.copy(resolved.path, esbuild)
+            }
+        }
+        esbuild.toFile().setExecutable(true)
+
+        val archive = tempDir.resolve("jinfer-test.zip")
+        val builder = Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").toAbsolutePath()
+        val process = ProcessBuilder(
+            "/bin/sh", builder.toString(), "/missing/zip", esbuild.toString(),
+            source.toString(), archive.toString(), "http://timestamp.digicert.com"
+        ).redirectErrorStream(true).start()
+        val result = process.inputStream.bufferedReader().use { it.readText() }
+        assertEquals(0, process.waitFor(), result)
+
+        return archive
+    }
+
+    private fun jinferPlan(args: List<String>, cacheDir: Path): LaunchPlan {
+        val archive = jinferRunZip
+        var result: LaunchPlan? = null
+        withServer { server ->
+            val bytes = Files.readAllBytes(archive)
+            server.createContext("/") { exchange ->
+                if (exchange.requestURI.path == "/jinfer-test.zip") exchange.respond(bytes)
+                else exchange.respond404()
+            }
+            makeCache(tempDir / "jinfer-run-cache").use { cache ->
+                URLResolver(cache, gatekeeper = false).resolve(server.uri("/jinfer-test.zip/run.js")).use { resolved ->
+                    assertNotNull(verifyRunPackage(resolved.entryDirectory), "make-run-zip should add a verifiable timestamp")
+                    assertFalse(Files.exists(resolved.entryDirectory.resolve("package.json")))
+                    assertFalse(Files.exists(resolved.entryDirectory.resolve("package-lock.json")))
+                    val script = resolved.path.toAbsolutePath()
+                    result = evaluateRunJavaScript(script,
+                        RunContext("macos", "arm64", null, args, resolved.entryDirectory, cacheDir = cacheDir)) { location ->
+                        tempDir / if ("jinfer-cli" in location) "jinfer.jar" else "java"
+                    }
+                }
+            }
+        }
+        return requireNotNull(result)
     }
 
     private fun permissionsPlan(permissions: String?): LaunchPlan {
@@ -901,12 +971,69 @@ class RunTest : URLTestSupport() {
             Path.of("/cache/zip")
         }
 
-        assertTrue(requested.single().contains("7z2603-linux-x64.tar.xz/7zz"))
+        assertEquals(2, requested.size)
+        assertTrue(requested.any { it.contains("7z2603-linux-x64.tar.xz/7zz") })
+        assertTrue(requested.any { it.contains("@esbuild/linux-x64/-/linux-x64-0.28.2.tgz/package/bin/esbuild") })
         assertEquals(packageDir.resolve("make-run-zip.sh").toAbsolutePath(), plan.executable)
-        assertEquals(listOf("/cache/zip", "source", "output.zip"), plan.arguments)
+        assertEquals(listOf("/cache/zip", "/cache/zip", "source", "output.zip"), plan.arguments)
         assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").readText(), "OpenSSL is required on PATH")
         assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").readText(), "-cert")
+        assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").readText(), "--define:global=globalThis")
         assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.ps1").readText(), "-cert")
+        assertContains(Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.ps1").readText(), "--define:global=globalThis")
+    }
+
+    @Test
+    fun `make-run-zip bundles npm dependencies and discards node_modules symlinks`() {
+        assumeFalse(System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
+        assumeTrue(ProcessBuilder("/bin/sh", "-c", "command -v zip").start().waitFor() == 0)
+
+        val source = (tempDir / "npm-source").createDirectories()
+        (source / "node_modules/.bin").createDirectories()
+        val run = source.resolve("run.js")
+        run.writeText("import mri from 'mri';")
+        (source / "package.json").writeText("{}")
+
+        val fakeTools = (tempDir / "bin").createDirectories()
+        val esbuild = fakeTools.resolve("esbuild")
+        esbuild.writeText(
+            """#!/bin/sh
+                |for argument do
+                |  case "${'$'}argument" in --outfile=*) output=${'$'}{argument#--outfile=} ;; esac
+                |done
+                |printf '%s\n' 'export default { executable: "true", arguments: [] };' > "${'$'}output"
+                |""".trimMargin()
+        )
+        esbuild.toFile().setExecutable(true)
+        try {
+            Files.createSymbolicLink(source.resolve("node_modules/.bin/esbuild"), esbuild)
+        } catch (_: UnsupportedOperationException) {
+            return
+        } catch (_: java.nio.file.FileSystemException) {
+            return
+        }
+
+        val output = tempDir.resolve("npm-sample.zip")
+        val process = ProcessBuilder(
+            "/bin/sh", Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.sh").toAbsolutePath().toString(),
+            "/missing/zip", esbuild.toString(), source.toString(), output.toString(), "http://timestamp.digicert.com"
+        ).redirectErrorStream(true).apply {
+            environment()["PATH"] = "$fakeTools:/usr/bin:/bin"
+        }.start()
+        val result = process.inputStream.bufferedReader().use { it.readText() }
+
+        assertEquals(0, process.waitFor(), result)
+        assertContains(result, "Bundling run.js and installed JavaScript dependencies")
+        java.util.zip.ZipFile(output.toFile()).use { archive ->
+            val names = archive.entries().asSequence().map { it.name }.toSet()
+            assertTrue("run.js" in names)
+            assertFalse("package.json" in names)
+            assertFalse("package-lock.json" in names)
+            assertTrue("timestamp.tsr" in names)
+            assertFalse(names.any { it.startsWith("node_modules/") })
+            assertContains(archive.getInputStream(archive.getEntry("run.js")).bufferedReader().readText(), "executable: \"true\"")
+        }
+        assertTrue(run.readText().contains("from 'mri'"), "source launcher must remain unchanged")
     }
 
     @Test
@@ -924,7 +1051,7 @@ class RunTest : URLTestSupport() {
         }
         val process = ProcessBuilder(
             "/bin/sh", script.toString(), "/missing/zip",
-            source.toString(), output.toString()
+            "/missing/esbuild", source.toString(), output.toString()
         ).redirectErrorStream(true).apply {
             environment()["PATH"] = "${fakeBin}:/usr/bin:/bin"
         }.start()
@@ -1011,7 +1138,7 @@ class RunTest : URLTestSupport() {
         val script = Path.of("site/r/make-run-zip/run.zip.d/make-run-zip.ps1").toAbsolutePath()
         val process = ProcessBuilder(
             powershell!!, "-NoProfile", "-NonInteractive", "-File", script.toString(),
-            "/missing/openssl.exe", "/missing/7z.exe", source.toString(), tempDir.resolve("output.zip").toString()
+            "/missing/openssl.exe", "/missing/7z.exe", "/missing/esbuild.exe", source.toString(), tempDir.resolve("output.zip").toString()
         ).redirectErrorStream(true).start()
         val result = process.inputStream.bufferedReader().use { it.readText() }
 

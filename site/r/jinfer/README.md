@@ -5,17 +5,19 @@ The published executable jar includes the model providers and JAM backends, so
 one launcher covers chat, one-shot generation, HTTP serving, speech synthesis,
 and transcription. It needs neither a preinstalled JDK nor JBang.
 
-Build the sample from the repository root, then launch the generated directory:
+Build the sample archive from the repository root. Gradle copies shared
+helpers, runs `npm ci` from the locked manifest, and invokes `make-run-zip` to
+bundle the parser and create the timestamped archive.
 
 ```shell
 ./gradlew packageJinferRunSample
-run ./build/run-packages/jinfer/run.zip.d --help
-run ./build/run-packages/jinfer/run.zip.d --version
-run ./build/run-packages/jinfer/run.zip.d instruct -m hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0 "Explain virtual threads in one sentence."
-run ./build/run-packages/jinfer/run.zip.d chat -m hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0
-run ./build/run-packages/jinfer/run.zip.d server -m hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0 --port 54154
-run ./build/run-packages/jinfer/run.zip.d speak -m ./inflect.gguf -o hello.wav "Hello world."
-run ./build/run-packages/jinfer/run.zip.d transcribe -m ./parakeet.gguf recording.wav
+run ./build/run-packages/jinfer/run.zip --help
+run ./build/run-packages/jinfer/run.zip --version
+run ./build/run-packages/jinfer/run.zip instruct -m hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0 "Explain virtual threads in one sentence."
+run ./build/run-packages/jinfer/run.zip chat -m hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0
+run ./build/run-packages/jinfer/run.zip server -m hf.co/LiquidAI/LFM2.5-350M-GGUF:Q8_0 --port 54154
+run ./build/run-packages/jinfer/run.zip speak -m ./inflect.gguf -o hello.wav "Hello world."
+run ./build/run-packages/jinfer/run.zip transcribe -m ./parakeet.gguf recording.wav
 ```
 
 Use `speak --help`, `transcribe --help`, or `server --help` for model-specific
@@ -53,13 +55,24 @@ currently enforce environment filtering only. Inspect the launch plan without
 starting Java:
 
 ```shell
-run -d ./build/run-packages/jinfer/run.zip.d instruct -m ./model.gguf "Hello."
+run -d ./build/run-packages/jinfer/run.zip instruct -m ./model.gguf "Hello."
 ```
 
-The build command also creates `build/run-packages/jinfer/run.zip`, with
-shared helpers assembled alongside the launcher. The site's deployment
-workflow uses the same Gradle tasks to publish `site/r/jinfer/run.zip`. See the
-[sample authoring guide](../README.md) for the shared helper layout.
+The source package imports upstream [`@pkgjs/parseargs`](https://github.com/pkgjs/parseargs)
+to demonstrate bundling a CommonJS library for GraalJS. `make-run-zip` bundles
+it into `run.js` at package creation time, then removes `node_modules`, leaving
+a single ECMAScript module launcher. To package manually, assemble the source
+with its shared helpers, install the locked npm dependency, then pass that
+directory to the builder:
+
+```shell
+./gradlew assembleJinferRunSample assembleMakeRunZipRunSample
+npm ci --prefix ./build/run-packages/jinfer/run.zip.d
+run ./build/run-packages/make-run-zip/run.zip.d -- \
+  ./build/run-packages/jinfer/run.zip.d ./build/run-packages/jinfer/manual.zip
+```
+
+See the [sample authoring guide](../README.md) for the shared helper layout.
 
 Host that archive as `https://example.com/jinfer/run.zip`, then launch it with
 `run example.com/jinfer --help`. See [make-run-zip](../make-run-zip/README.md)

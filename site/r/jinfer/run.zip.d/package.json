@@ -1,0 +1,7 @@
+{
+  "name": "qxotic-jinfer-runzip-sample",
+  "private": true,
+  "dependencies": {
+    "@pkgjs/parseargs": "0.11.0"
+  }
+}

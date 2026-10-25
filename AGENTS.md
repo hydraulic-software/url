@@ -47,13 +47,22 @@ Prefer focused tests while iterating:
 ## Contribution guidance
 
 - Stage newly created files with `git add` by default. Leave files unstaged when the user explicitly asks for that.
+- Gradle assembles sample source directories by copying declared shared helpers.
+  Use `package<Name>RunSample` or `packageRunSamples` to automate packaging via
+  the actual `make-run-zip` launcher; tests that need an archive should also
+  create it with `make-run-zip`, not a Gradle ZIP task.
 - Preserve the output contract: successful paths go only to stdout; progress
   and diagnostics go only to stderr.
 - Add or update tests for every observable behavior change, especially URL
   parsing, caching, archive fallback, hash locks, proxy behavior, and CLI exit
   codes.
 - Keep tests hermetic. Use `@TempDir` and the test-local HTTP server helpers;
-  do not depend on public network services.
+  do not depend on public network services, except that RFC 3161 timestamp
+  authority (TSA) requests are free, so timestamped-package tests should use a
+  real TSA instead of mocking the TSA interaction. The jinfer run.zip
+  integration test also installs its locked npm dependency and resolves the
+  pinned esbuild binary so it can test the actual archive produced by
+  `make-run-zip`.
 - Maintain cross-platform behavior. Guard POSIX- and macOS-specific assertions
   and retain Windows `run.ps1` handling.
 - `url` inputs without a scheme imply HTTPS. Do not change that normalization
