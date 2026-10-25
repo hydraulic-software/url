@@ -1,5 +1,6 @@
 package hydraulic.url
 
+import org.intellij.lang.annotations.Language
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
@@ -9,39 +10,40 @@ import kotlin.io.path.writeText
 internal const val ZSH_SETUP_BEGIN = "# >>> Hydraulic URL integration >>>"
 internal const val ZSH_SETUP_END = "# <<< Hydraulic URL integration <<<"
 
-internal val ZSH_SETUP_BLOCK = """
-    $ZSH_SETUP_BEGIN
+@Language("zsh")
+internal val ZSH_SETUP_BLOCK = $$"""
+    $$ZSH_SETUP_BEGIN
     # Prefix an HTTP(S) command line before zsh treats its slashes as a local path.
     function _hydraulic_url_accept_line() {
-      if [[ ${'$'}BUFFER =~ '^([[:space:]]*)[?][[:space:]]*(.*)' ]]; then
-        local leading=${'$'}match[1]
-        local command_line=${'$'}match[2]
+      if [[ $BUFFER =~ '^([[:space:]]*)[?][[:space:]]*(.*)' ]]; then
+        local leading=$match[1]
+        local command_line=$match[2]
         local command_name rest
-        if [[ ${'$'}{command_line[1]} == '"' || ${'$'}{command_line[1]} == "'" ]]; then
+        if [[ ${command_line[1]} == '"' || ${command_line[1]} == "'" ]]; then
           local -a parts
-          parts=("${'$'}{(@z)command_line}")
-          command_name=${'$'}{(Q)parts[1]}
-          rest=${'$'}{command_line:${'$'}{#parts[1]}}
+          parts=("${(@z)command_line}")
+          command_name=${(Q)parts[1]}
+          rest=${command_line:${#parts[1]}}
         else
-          command_name=${'$'}{command_line%%[[:space:]]*}
-          rest=${'$'}{command_line:${'$'}{#command_name}}
+          command_name=${command_line%%[[:space:]]*}
+          rest=${command_line:${#command_name}}
         fi
-        if [[ -n ${'$'}command_name ]]; then
-          BUFFER="${'$'}{leading}run -d ${'$'}{(q)command_name}${'$'}rest"
+        if [[ -n $command_name ]]; then
+          BUFFER="${leading}run -d ${(q)command_name}$rest"
         fi
-      elif [[ ${'$'}BUFFER =~ '^([[:space:]]*)(https?://[^[:space:]]+)' ]]; then
-        local leading=${'$'}match[1]
-        local command_name=${'$'}match[2]
-        local rest=${'$'}{BUFFER:${'$'}{#MATCH}}
-        BUFFER="${'$'}{leading}run ${'$'}{(q)command_name}${'$'}rest"
+      elif [[ $BUFFER =~ '^([[:space:]]*)(https?://[^[:space:]]+)' ]]; then
+        local leading=$match[1]
+        local command_name=$match[2]
+        local rest=${BUFFER:${#MATCH}}
+        BUFFER="${leading}run ${(q)command_name}$rest"
       fi
       zle _hydraulic_url_previous_accept_line
     }
-    if [[ -o interactive && ${'$'}widgets[accept-line] != user:_hydraulic_url_accept_line ]]; then
+    if [[ -o interactive && $widgets[accept-line] != user:_hydraulic_url_accept_line ]]; then
       zle -A accept-line _hydraulic_url_previous_accept_line
       zle -N accept-line _hydraulic_url_accept_line
     fi
-    $ZSH_SETUP_END
+    $$ZSH_SETUP_END
 """.trimIndent()
 
 internal fun installZshIntegration(zshrc: Path): Boolean {
