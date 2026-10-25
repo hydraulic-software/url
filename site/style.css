@@ -43,6 +43,8 @@ button:hover { color: var(--cyan); }
 .reply { color: var(--muted); }
 .terminal-art { padding: 22px 24px 26px; background: #1b1b27; }
 .terminal-art img { display: block; width: 100%; max-height: 240px; object-fit: contain; object-position: left center; }
+.terminal-art small { display: block; margin-top: 10px; color: var(--muted); font-size: .68rem; }
+.terminal-art small a { color: inherit; }
 .aside { max-width: 650px; margin: 20px 0 0; color: var(--muted); font-size: .82rem; line-height: 1.55; }
 
 .features { border-top: 1px solid var(--rule); }
@@ -54,6 +56,15 @@ button:hover { color: var(--cyan); }
 .command { border: 1px solid var(--rule); background: var(--panel); box-shadow: 6px 6px 0 #000; }
 .command-label { margin: 0; padding: 10px 13px; border-bottom: 1px solid var(--rule); color: var(--muted); font-size: .72rem; }
 .command pre { margin: 0; padding: 22px; font-size: clamp(.7rem, 1.25vw, .86rem); line-height: 1.65; }
+.command pre.dry-run-command { padding-bottom: 4px; }
+.command pre.dry-run-output { padding-top: 4px; }
+.dry-run-output { color: var(--ink); }
+.ansi-bold { font-weight: 700; }
+.ansi-yellow { color: var(--accent); }
+.ansi-cyan { color: var(--cyan); }
+.ansi-dim { color: var(--muted); }
+.ansi-green { color: #63d68b; }
+.ansi-strike { text-decoration: line-through; }
 .download { display: flex; justify-content: space-between; align-items: center; padding: 18px; border: 1px solid var(--accent); color: var(--bg); background: var(--accent); font-weight: 700; text-decoration: none; }
 .download:hover { color: var(--bg); background: var(--cyan); border-color: var(--cyan); }
 .download span { font-size: 1.3em; }

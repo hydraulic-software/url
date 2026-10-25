@@ -3,17 +3,17 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="url caches HTTP resources as local paths. run executes remote tools.">
-    <title>runurl — HTTP on demand in your shell</title>
+    <meta name="description" content="run-url caches HTTP resources as local paths.">
+    <title>run-url — HTTP on demand in your shell</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.css">
 </head>
 <body>
 <header>
-    <a class="wordmark" href="https://github.com/hydraulic-software/url" aria-label="Hydraulic URL on GitHub">url</a>
+    <a class="wordmark" href="https://github.com/hydraulic-software/url" aria-label="runurl on GitHub">runurl</a>
     <nav aria-label="Project links">
         <a href="#cache">cache</a>
-        <a href="#run">run</a>
+        <a href="#run">execute</a>
         <a href="https://github.com/hydraulic-software/url#readme">man</a>
         <a href="https://github.com/hydraulic-software/url">source ↗</a>
     </nav>
@@ -22,35 +22,24 @@
 <main>
     <section class="intro" id="cache">
         <h1>HTTP on demand<br><em>in your shell</em></h1>
-        <p class="lede"><code>url</code> downloads an HTTP resource to a disk cache and prints its local path.
-            <code>run</code> does that, then executes the target securely.</p>
+        <p class="lede"><code>url</code> downloads an HTTP resource to a disk cache and prints its local path. <code>run</code> executes programs from URLs, like in a browser.</p>
         <div class="terminal" aria-label="Resolve a URL to a local path">
             <div class="terminal-top"><span>sh</span>
-                <button type="button" data-copy="chafa `url https://omarchy.org/brand/omarchy-wordmark.svg`">copy
+                <button type="button" data-copy="chafa `url https://upload.wikimedia.org/wikipedia/commons/7/7c/Atlantic_Puffin_Illustration.svg`">copy
                 </button>
             </div>
-            <pre><span class="prompt">~ ❯</span> url https://omarchy.org/brand/omarchy-wordmark.svg
-<span class="reply">/home/mike/.cache/dev.hydraulic/url-tool/cache/entries/af/2c/af2c4969d14f020b/content/omarchy-wordmark.svg</span>
+            <pre><span class="prompt">~ ❯</span> url https://upload.wikimedia.org/wikipedia/commons/7/7c/Atlantic_Puffin_Illustration.svg
+<span class="reply">/home/mike/.cache/dev.hydraulic/url-tool/cache/entries/af/2c/af2c4969d14f020b/content/Atlantic_Puffin_Illustration.svg</span>
 
-<span class="prompt">~ ❯</span> chafa `url https://omarchy.org/brand/omarchy-wordmark.svg`</pre>
-            <div class="terminal-art"><img src="https://omarchy.org/brand/omarchy-wordmark.svg" alt="Omarchy wordmark">
-            </div>
+<span class="prompt">~ ❯</span> chafa `url https://upload.wikimedia.org/wikipedia/commons/7/7c/Atlantic_Puffin_Illustration.svg`</pre>
+            <img src="puffin.svg" alt="Atlantic puffin illustration by Aki G. Karlsson">
         </div>
-        <p class="aside">HTTP's caching protocol is used; run it again and the result comes back fast. If the resource
-            has changed it's refreshed.</p>
+
+        <p class="aside">HTTP's caching protocol is used, so repeated requests return quickly. If the resource has
+            changed it's refreshed.</p>
     </section>
 
     <section class="features" aria-label="How it works">
-        <article class="feature" id="spec">
-            <div class="feature-copy">
-                <h2>Reimplementable</h2>
-                <p class="aside">Don't like this implementation? No problem.</p>
-                <p class="aside">Give the <a
-                        href="https://github.com/hydraulic-software/url/blob/master/specs/README.md">specification</a>
-                    to your favourite model and make a better one that's drop-in compatible.</p>
-            </div>
-        </article>
-
         <article class="feature" id="archives">
             <div class="feature-copy">
                 <h2>Link inside archives</h2>
@@ -58,8 +47,8 @@
                     and the path is printed.</p>
             </div>
             <div class="command">
-                <pre><span class="prompt">$</span> ls `url downloads.hydraulic.dev/conveyor/conveyor-22.2-linux-amd64.tar.gz/lib`
-<span class="reply">app&nbsp;&nbsp;&nbsp;runtime</span></pre>
+                <pre><span class="prompt">$</span> file `url downloads.hydraulic.dev/conveyor/conveyor-22.2-linux-amd64.tar.gz/conveyor-22.2/bin/conveyor`
+<span class="reply">/Users/mikehearn/…/content/conveyor-22.2/bin/conveyor: ELF 64-bit LSB pie executable, x86-64</span></pre>
             </div>
             <div class="feature-copy">
                 Many codecs are supported, including zstd.
@@ -69,13 +58,14 @@
         <article class="feature" id="pin">
             <div class="feature-copy">
                 <h2>Pin the server down</h2>
-                <p>Add a SHA-256 fragment to lock expected content.</p>
+                <p>Add a SHA-256 fragment to lock expected content. For a file inside an archive the hash
+                    applies to the complete archive.</p>
             </div>
             <div class="command">
                 <p class="command-label">sh</p>
-                <pre><span class="prompt">$</span> url example.com/tool#sha256=e9e433…602712
-<span class="reply">…/content/tool</span></pre>
-                <pre><span class="prompt">$</span> url example.com/tool#sha256=e9e433…ffffff
+                <pre><span class="prompt">$</span> url example.com/tool.tar.gz/bin/tool#sha256=e9e433…602712
+<span class="reply">…/content/bin/tool</span></pre>
+                <pre><span class="prompt">$</span> url example.com/tool.tar.gz/bin/tool#sha256=e9e433…ffffff
 <span class="reply">url: SHA-256 mismatch: expected e9e433…ffffff but resolved e9e433…602712</span></pre>
             </div>
         </article>
@@ -83,7 +73,7 @@
         <article class="feature" id="file-lists">
             <div class="feature-copy">
                 <h2>Resolve in bulk</h2>
-                <p class="aside">Multiple URLs are downloaded in parallel. Comments and blank lines are ignored, so the
+                <p class="aside">Provide URLs on stdin. Multiple URLs are downloaded in parallel. Comments and blank lines are ignored, so the
                     input doubles as a small lockfile.</p>
             </div>
             <div class="command">
@@ -99,7 +89,7 @@ EOF
 …/content/b</span></pre>
             </div>
             <div class="feature-copy">
-                Name the URLs to get variable assignments suitable for evaluation in shell scripts.
+                <p class="aside">Name the URLs to get variable assignments suitable for evaluation in shell scripts.</p>
             </div>
             <div class="command">
                 <p class="command-label">sh</p>
@@ -113,11 +103,22 @@ b=…/content/b</span></pre>
             </div>
         </article>
 
+        <article class="feature" id="progress">
+            <div class="feature-copy">
+                <h2>Watch a download</h2>
+                <p class="aside">Use <code>--progress=bar</code> for an animated Unicode progress bar while
+                    <code>url</code> downloads.</p>
+            </div>
+            <div class="command cast-command">
+                <p class="command-label">sh · asciicast</p>
+                <div id="progress-cast" aria-label="Animated url download progress"></div>
+            </div>
+        </article>
+
         <article class="feature" id="run">
             <div class="feature-copy">
-                <h2>Execute URLs directly</h2>
-                <p class="aside"><code>run</code> appends <code>/run.zip/run.js</code> and executes that script inside a
-                    sandbox to compute a launch plan.</p>
+                <h2>Run things like you're on the web</h2>
+                <p class="aside"><code>run</code> takes a URL and executes the program found at that location.</p>
             </div>
             <div class="command">
                 <p class="command-label">sh</p>
@@ -137,8 +138,56 @@ argument: hello</span></pre>
 argument: hello</span></pre>
             </div>
             <div class="feature-copy">
-                <p class="aside">The <code>run.js</code> file knows the OS/CPU arch, can download more URLs to the disk
-                    cache and returns how to start the program.</p>
+                <p class="aside">The URL has <code>/run.zip/run.js</code> appended. The JS runs in a sandbox and returns a launch plan.
+                    It can download more URLs to the disk cache, compose different sources together, and change behavior depending on the host OS/CPU and command line flags.</p>
+                <p class="aside">Launch plans can specify the permissions of the executed program, so <code>run</code> supports sandboxing. Permissions can be dynamic based on command line flags.</p>
+                <p class="aside">Preview the launch plan with <code>--dry-run</code>. This Jinfer example derives
+                    permissions from its arguments, then shows which restrictions the host can enforce. Paths are
+                    abbreviated; the dry run prints this plan without starting Jinfer.</p>
+            </div>
+            <div class="command">
+                <p class="command-label">sh</p>
+                <pre class="dry-run-command"><span class="prompt">$</span> ?jinfer.qxotic.ai --help</pre>
+                <pre class="dry-run-output"><span class="ansi-bold ansi-yellow">DRY RUN</span><span class="ansi-dim">  Launch plan</span>
+
+<span class="ansi-bold ansi-cyan">Command</span>
+  <span class="ansi-dim">Executable</span>  …/graalvm-jdk-25.0.4+7.1/Contents/Home/bin/java
+  <span class="ansi-dim">Arguments</span>
+    <span class="ansi-dim"> 1</span>  -Djinfer.models=~/Library/Caches/ai.qxotic.jinfer/models
+    <span class="ansi-dim"> 2</span>  -Djava.io.tmpdir=~/Library/Caches/ai.qxotic.jinfer
+    <span class="ansi-dim"> 3</span>  --add-modules
+    <span class="ansi-dim"> 4</span>  jdk.incubator.vector,jdk.httpserver
+    <span class="ansi-dim"> 5</span>  --enable-native-access=ALL-UNNAMED
+    <span class="ansi-dim"> 6</span>  -jar
+    <span class="ansi-dim"> 7</span>  …/jinfer-cli-0.3.1.jar
+    <span class="ansi-dim"> 8</span>  --help
+
+<span class="ansi-bold ansi-cyan">Sandbox</span>
+  <span class="ansi-dim">Rules revision</span>  2026-10-10
+  <span class="ansi-dim">Backend</span>         macOS Seatbelt
+
+<span class="ansi-bold ansi-cyan">Permissions</span>
+  <span class="ansi-dim">Requested</span>
+  <span class="ansi-dim">write</span>
+    <span class="ansi-dim"> 1</span>  ~/Library/Caches/ai.qxotic.jinfer
+  <span class="ansi-dim">network</span>  <span class="ansi-green">client</span> · <span class="ansi-dim ansi-strike">server</span>
+  <span class="ansi-dim">enforcement</span>  files and network enforced · environment enforced
+
+  <span class="ansi-dim">Baseline</span>
+  <span class="ansi-dim">read + execute</span>
+    <span class="ansi-dim"> 1</span>  …/jinfer-cli-0.3.1.jar
+    <span class="ansi-dim"> 2</span>  …/graalvm-cache-entry/content
+    <span class="ansi-dim"> 3</span>  system libraries, configuration and programs
+  <span class="ansi-dim">working directory traversal</span>  ~/Hydraulic/url
+  <span class="ansi-dim">private temporary directory</span>  …/hydraulic-run-…
+  <span class="ansi-dim">environment</span>
+    <span class="ansi-dim"> 1</span>  HOME
+    <span class="ansi-dim"> 2</span>  LANG
+    <span class="ansi-dim"> 3</span>  LC_ALL
+    <span class="ansi-dim"> 4</span>  LC_CTYPE
+    <span class="ansi-dim"> 5</span>  PATH
+    <span class="ansi-dim"> 6</span>  TERM
+    <span class="ansi-dim"> 7</span>  TMPDIR</pre>
             </div>
             <div class="feature-copy">
                 <p class="aside">Writing a package? Give your agent the
@@ -152,18 +201,15 @@ argument: hello</span></pre>
             </div>
         </article>
 
-        <article class="feature" id="progress">
+        <article class="feature" id="spec">
             <div class="feature-copy">
-                <h2>Watch a download</h2>
-                <p class="aside">Use <code>--progress=bar</code> for an animated Unicode progress bar while
-                    <code>url</code> downloads.</p>
-            </div>
-            <div class="command cast-command">
-                <p class="command-label">sh · asciicast</p>
-                <div id="progress-cast" aria-label="Animated url download progress"></div>
+                <h2>Reimplementable</h2>
+                <p class="aside">Don't like this implementation? No problem.</p>
+                <p class="aside">Give the <a
+                        href="https://github.com/hydraulic-software/url/blob/master/specs/README.md">specification</a>
+                    to your favourite model and make a better one that's drop-in compatible.</p>
             </div>
         </article>
-
     </section>
 </main>
 
