@@ -46,6 +46,7 @@ Prefer focused tests while iterating:
 
 ## Contribution guidance
 
+- Stage newly created files with `git add` by default. Leave files unstaged when the user explicitly asks for that.
 - Preserve the output contract: successful paths go only to stdout; progress
   and diagnostics go only to stderr.
 - Add or update tests for every observable behavior change, especially URL
