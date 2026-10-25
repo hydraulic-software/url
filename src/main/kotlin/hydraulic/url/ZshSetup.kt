@@ -13,7 +13,7 @@ internal const val ZSH_SETUP_END = "# <<< Hydraulic URL integration <<<"
 @Language("zsh")
 internal val ZSH_SETUP_BLOCK = $$"""
     $$ZSH_SETUP_BEGIN
-    # Prefix an HTTP(S) command line before zsh treats its slashes as a local path.
+    # Prefix an HTTP(S) URL or bare domain before zsh treats its slashes as a local path.
     function _hydraulic_url_accept_line() {
       # Is this a dry run?
       if [[ $BUFFER =~ '^([[:space:]]*)[?][[:space:]]*(.*)' ]]; then
@@ -33,6 +33,15 @@ internal val ZSH_SETUP_BLOCK = $$"""
           BUFFER="${leading}run -d ${(q)command_name}$rest"
         fi
       elif [[ $BUFFER =~ '^([[:space:]]*)(https?://[^[:space:]]+)' ]]; then
+        local leading=$match[1]
+        local command_name=$match[2]
+        local rest=${BUFFER:${#MATCH}}
+        BUFFER="${leading}run ${(q)command_name}$rest"
+      # Match an optional leading indent, then a domain with an alphanumeric
+      # first character and a final alphabetic label of at least two letters.
+      # A port and a slash-prefixed path may follow the domain. Stop the match
+      # at whitespace so the remaining shell words stay as run arguments.
+      elif [[ $BUFFER =~ '^([[:space:]]*)([[:alnum:]][[:alnum:].-]*\.[[:alpha:]]{2,}(:[0-9]+)?(/[^[:space:]]*)?)' ]]; then
         local leading=$match[1]
         local command_name=$match[2]
         local rest=${BUFFER:${#MATCH}}

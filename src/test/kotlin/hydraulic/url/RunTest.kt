@@ -578,6 +578,9 @@ class RunTest : URLTestSupport() {
             BUFFER='https://example.test/tool alpha beta'
             _hydraulic_url_accept_line
             eval "${'$'}BUFFER"
+            BUFFER='example.test/tool alpha beta'
+            _hydraulic_url_accept_line
+            eval "${'$'}BUFFER"
         """.trimIndent()
         val process = ProcessBuilder(zsh.toString(), "-dfc", command)
             .redirectErrorStream(true)
@@ -587,6 +590,7 @@ class RunTest : URLTestSupport() {
 
         assertEquals(0, process.waitFor(), output)
         assertContains(output, "executed:https://example.test/tool:alpha:beta")
+        assertContains(output, "executed:example.test/tool:alpha:beta")
     }
 
     @Test

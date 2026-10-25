@@ -1,7 +1,7 @@
 # `url` and `run`
 
 - `url` downloads the given URL to a disk cache and prints its path.
-- `run` takes a URL, appends a well-known path and executes what it finds there, with `zsh` integration so you can run URLs directly.
+- `run` takes a URL or domain name, appends a well-known path and executes what it finds there, with `zsh` integration so you can run URLs or bare domains directly.
 
 The [specifications](specs/README.md) separate the `url` command, the `run` command,
 and their shared URL resolution contract.

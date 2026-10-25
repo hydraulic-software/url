@@ -61,6 +61,9 @@ through `run --no-gatekeeper`:
   create it with `make-run-zip`, not a Gradle ZIP task.
 - Preserve the output contract: successful paths go only to stdout; progress
   and diagnostics go only to stderr.
+- When adding or changing a complicated regular expression, add a nearby comment
+  that explains its structure and intent in enough detail to understand the
+  forms it accepts.
 - To inspect a remote resource or archive layout, use this repository's `url`
   command. Resolve an archive URL with a trailing slash to inspect its extracted
   directory, or append `/member/path` to resolve a specific archive member; do
