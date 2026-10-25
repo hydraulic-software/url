@@ -27,7 +27,7 @@ dependencies {
     implementation("org.slf4j:slf4j-nop:2.0.16")
     implementation("de.malkusch.whois-server-list:public-suffix-list:2.2.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0-RC")
-    implementation("org.apache.commons:commons-compress:1.27.1")
+    implementation("org.apache.commons:commons-compress:1.28.0")
     implementation("org.tukaani:xz:1.9")
     implementation("io.airlift:aircompressor-v3:3.6")
     // 3.1.0 fixes an AArch64 macOS native-image crash caused by calling the

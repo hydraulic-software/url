@@ -60,40 +60,44 @@ internal fun extractSafeLocalArchive(archive: Path, destination: Path, minimumFr
     val root = destination.toRealPath()
     val state = StreamingExtractionState(root)
     val space = DiskSpaceGuard(minimumFreeSpaceBytes, usableSpace)
-    ZipFile.builder().setPath(archive).get().use { zip ->
-        val entries = zip.entries
-        while (entries.hasMoreElements()) {
-            val entry = entries.nextElement()
-            require(zip.canReadEntryData(entry)) { "Unable to read archive entry ${entry.name}" }
-            val type = entry.unixMode and 0xF000
-            require(type == 0 || type == 0x8000 || type == 0x4000 || type == 0xA000) {
-                "Archive entry has an unsupported special type: ${entry.name}"
-            }
-            // TarArchiveEntry constructors can normalize absolute names; validate the original ZIP spelling first.
-            val relative = Path.of(entry.name.removePrefix("./"))
-            require(relative.root == null && relative.normalize() == relative) {
-                "Archive entry has an unsafe path: ${entry.name}"
-            }
-            val tarEntry = TarArchiveEntry(entry.name, when {
-                entry.isUnixSymlink -> TarConstants.LF_SYMLINK
-                entry.isDirectory -> TarConstants.LF_DIR
-                else -> TarConstants.LF_NORMAL
-            }).apply {
-                size = if (entry.isDirectory || entry.isUnixSymlink) 0 else entry.size
-                mode = if (entry.unixMode == 0) 0b110_100_100 else entry.unixMode
-            }
-            zip.getInputStream(entry).use { input ->
-                if (entry.isUnixSymlink) {
-                    // Link payloads are untrusted too; never allocate according to their declared size.
-                    require(entry.size in 1..4096) { "Archive symlink target is too long: ${entry.name}" }
-                    val target = input.readNBytes(4097)
-                    require(target.size <= 4096) { "Archive symlink target is too long: ${entry.name}" }
-                    tarEntry.linkName = target.toString(Charsets.UTF_8)
+    ZipFile.builder()
+        .setPath(archive)
+        .setZstdInputStreamFactory { ZstdInputStream(it) }
+        .get()
+        .use { zip ->
+            val entries = zip.entries
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                require(zip.canReadEntryData(entry)) { "Unable to read archive entry ${entry.name}" }
+                val type = entry.unixMode and 0xF000
+                require(type == 0 || type == 0x8000 || type == 0x4000 || type == 0xA000) {
+                    "Archive entry has an unsupported special type: ${entry.name}"
                 }
-                extractTarEntry(input, tarEntry, state, space)
+                // TarArchiveEntry constructors can normalize absolute names; validate the original ZIP spelling first.
+                val relative = Path.of(entry.name.removePrefix("./"))
+                require(relative.root == null && relative.normalize() == relative) {
+                    "Archive entry has an unsafe path: ${entry.name}"
+                }
+                val tarEntry = TarArchiveEntry(entry.name, when {
+                    entry.isUnixSymlink -> TarConstants.LF_SYMLINK
+                    entry.isDirectory -> TarConstants.LF_DIR
+                    else -> TarConstants.LF_NORMAL
+                }).apply {
+                    size = if (entry.isDirectory || entry.isUnixSymlink) 0 else entry.size
+                    mode = if (entry.unixMode == 0) 0b110_100_100 else entry.unixMode
+                }
+                zip.getInputStream(entry).use { input ->
+                    if (entry.isUnixSymlink) {
+                        // Link payloads are untrusted too; never allocate according to their declared size.
+                        require(entry.size in 1..4096) { "Archive symlink target is too long: ${entry.name}" }
+                        val target = input.readNBytes(4097)
+                        require(target.size <= 4096) { "Archive symlink target is too long: ${entry.name}" }
+                        tarEntry.linkName = target.toString(Charsets.UTF_8)
+                    }
+                    extractTarEntry(input, tarEntry, state, space)
+                }
             }
         }
-    }
     state.createSymlinks()
 }
 

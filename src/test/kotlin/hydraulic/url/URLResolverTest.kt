@@ -366,6 +366,24 @@ class URLResolverTest : URLTestSupport() {
     }
 
     @Test
+    fun `zstandard-compressed zip entry extracts through Airlift decoder`() {
+        val archive = zstdZipOf("tool/member", "zstandard zip member")
+        val transport = HttpTransport { uri, _ ->
+            if (uri.path.endsWith("tool.zip"))
+                HttpTransport.Response(200, emptyMap(), ByteArrayInputStream(archive))
+            else
+                HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache, transport = transport)
+                .resolve(URI("https://example.com/tool.zip/tool/member")).use {
+                    assertEquals("zstandard zip member", it.path.readText())
+                }
+        }
+    }
+
+    @Test
     fun `existing composite-looking URL is used without archive fallback`() = withServer { server ->
         val requests = AtomicInteger()
         server.createContext("/") { exchange ->

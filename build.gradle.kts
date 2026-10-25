@@ -21,6 +21,8 @@ dependencies {
     implementation(project(":hydraulic.archives"))
     implementation(project(":hydraulic.utils"))
     implementation(project(":hydraulic.utils.hashing"))
+    // 1.28 adds ZIP Zstandard decoding with a pluggable stream factory.
+    implementation("org.apache.commons:commons-compress:1.28.0")
     implementation("io.airlift:aircompressor-v3:3.6")
     implementation("dev.progress4j:progress-api")
     implementation("dev.progress4j:progress-terminal")

@@ -57,6 +57,8 @@ the archive resource. Supported suffixes are `.zip`, `.tar`, `.tar.gz`, `.tgz`,
 `.tar.bz2`, `.tar.xz`, `.tar.zst`, `.tar.zstd`, and `.tar.Z`,
 case-insensitively. Archives may be nested.
 A trailing slash after an archive name selects its extracted root.
+ZIP entries compressed with Zstandard using compression method 93 must be
+readable.
 
 Extraction must reject traversal, including writes redirected outside the
 extracted root by archive-created or pre-existing symbolic links. It must not

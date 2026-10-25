@@ -6,15 +6,18 @@ import io.airlift.compress.v3.zstd.ZstdOutputStream
 import hydraulic.diskcache.LocalDiskCache
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
+import org.apache.commons.compress.archivers.zip.ZipMethod
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.archivers.tar.TarConstants
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.junit.jupiter.api.io.TempDir
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.HexFormat
+import java.util.zip.CRC32
 import kotlin.io.path.writeBytes
 import kotlin.test.assertEquals
 
@@ -82,6 +85,27 @@ abstract class URLTestSupport {
             }
         }
         bytes.toByteArray()
+    }
+
+    protected fun zstdZipOf(name: String, contents: String): ByteArray {
+        val data = contents.toByteArray()
+        val compressed = ByteArrayOutputStream().use { bytes ->
+            ZstdOutputStream(bytes).use { it.write(data) }
+            bytes.toByteArray()
+        }
+        val crc = CRC32().apply { update(data) }
+        return ByteArrayOutputStream().use { bytes ->
+            ZipArchiveOutputStream(bytes).use { zip ->
+                val entry = ZipArchiveEntry(name).apply {
+                    method = ZipMethod.ZSTD.code
+                    size = data.size.toLong()
+                    compressedSize = compressed.size.toLong()
+                    this.crc = crc.value
+                }
+                zip.addRawArchiveEntry(entry, ByteArrayInputStream(compressed))
+            }
+            bytes.toByteArray()
+        }
     }
 
     protected fun HttpExchange.respond(bytes: ByteArray) {
