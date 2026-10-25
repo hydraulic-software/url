@@ -61,12 +61,6 @@ meaning because the preceding text is not a shell variable name.
   [shared resolution contract](shared-resolution.md#resolution).
   It has no effect on other systems.
 - `-V`, `--version`: print the build's version and exit successfully.
-- `--progress=json`: emit machine-readable progress as newline-delimited JSON
-  objects on standard error. Each progress object must have `"type":
-  "progress"`; implementations may add fields, and scripts must ignore fields
-  they do not recognize. Progress frequency is not guaranteed, and successful
-  resolution does not require any progress object to be emitted.
-
 Missing or malformed values for these options must fail. Value-taking options
 must also accept the separated form, for example `--cache-dir PATH`.
 

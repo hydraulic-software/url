@@ -260,6 +260,32 @@ class URLResolverTest : URLTestSupport() {
     }
 
     @Test
+    fun `streamed tarball reports download progress while extracting`() {
+        val archiveURI = URI("https://example.com/tool.tar.gz")
+        val tarball = tarGzOf("tool/bin/tool" to "streamed member")
+        val reports = mutableListOf<dev.progress4j.api.ProgressReport>()
+        val tracker = dev.progress4j.api.ProgressReport.Tracker(reports::add)
+        val transport = HttpTransport { uri, _ ->
+            if (uri == archiveURI) HttpTransport.Response(
+                200,
+                mapOf("Content-Length" to listOf(tarball.size.toString())),
+                ByteArrayInputStream(tarball)
+            ) else HttpTransport.Response(404, emptyMap(), ByteArrayInputStream(byteArrayOf()))
+        }
+
+        makeCache().use { cache ->
+            URLResolver(cache, progressTracker = tracker, transport = transport)
+                .resolve(URI("$archiveURI/tool/bin/tool")).use {
+                    assertEquals("streamed member", it.path.readText())
+                }
+        }
+
+        assertTrue(reports.isNotEmpty(), "Expected progress reports while the archive stream was consumed")
+        assertEquals(tarball.size.toLong(), reports.last().completed)
+        assertEquals(tarball.size.toLong(), reports.last().expectedTotal)
+    }
+
+    @Test
     fun `refresh fetches a streamed tarball again`() {
         val archiveURI = URI("https://example.com/tool.tar.gz")
         val first = tarGzOf("tool-1.0/bin/tool" to "version 1")

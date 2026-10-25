@@ -11,7 +11,10 @@ import java.nio.file.Path
 internal const val CACHE_LAYOUT_DIRECTORY = "v2"
 
 /** Shared command-line options and lifetime of a resolver session. */
-class ResolverOptions(private val environment: Map<String, String> = System.getenv()) {
+class ResolverOptions(
+    private val environment: Map<String, String> = System.getenv(),
+    defaultProgress: String = "term"
+) {
     @Option(names = ["--cache-dir"], description = ["Shared cache directory."])
     var cacheDirectory: Path = OperatingSystemPaths.current("dev.hydraulic", "url-tool").localCache
 
@@ -24,10 +27,12 @@ class ResolverOptions(private val environment: Map<String, String> = System.gete
     @Option(
         names = ["--progress"],
         paramLabel = "MODE",
-        defaultValue = "term",
-        description = ["Write progress indicators to stderr: bar (animated unicode progress bar), term (OSC escapes for terminal emulator rendered bars), never, plain, or json (default: ${'$'}{DEFAULT-VALUE}). If stderr isn't a terminal then bar/term have no effect."]
+        description = ["Write progress indicators to stderr: bar (animated unicode progress bar), term (OSC escapes for terminal emulator rendered bars), never, plain, or json. If stderr isn't a terminal then bar/term have no effect."]
     )
-    var progress: String = "term"
+    var progress: String = defaultProgress
+
+    @Option(names = ["-p"], description = ["Show the animated Unicode progress bar (same as --progress=bar)."])
+    var progressBar: Boolean = false
 
     @Option(names = ["--verbose"], description = ["Print detailed failure diagnostics, including stack traces."])
     var verbose: Boolean = verboseErrors(environment)
@@ -36,7 +41,7 @@ class ResolverOptions(private val environment: Map<String, String> = System.gete
     var downloadPolicy: DownloadPolicy = DownloadPolicy()
 
     internal fun <T> withResolver(gatekeeper: Boolean = !noGatekeeper, action: (DiskCache, URLResolver, ProgressReport.Tracker?) -> T): T {
-        val tracker = progressTracker(progress, System.err, environment, ::isStderrInteractive)
+        val tracker = progressTracker(if (progressBar) "bar" else progress, System.err, environment, ::isStderrInteractive)
         try {
             val minimumBytes = downloadPolicy.minimumFreeSpaceBytes(environment)
             preparePrivateCacheDirectory(cacheDirectory)

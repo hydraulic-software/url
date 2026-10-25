@@ -43,7 +43,7 @@ class Run(
     var dry: Boolean = false
 
     @Mixin
-    var resolverOptions: ResolverOptions = ResolverOptions(environment)
+    var resolverOptions: ResolverOptions = ResolverOptions(environment, defaultProgress = "bar")
 
     override fun call(): Int {
         if (install) {

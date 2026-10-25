@@ -116,8 +116,9 @@ and `*` to bypass proxies for every request.
 ## Progress tracking
 
 If stderr points to an interactive terminal then `url` emits OSC progress bar events. Modern terminal emulators like
-iTerm2 can render these nicely in the UI. You can also use the `--progress=bar` flag to get a nice animated Unicode
-progress bar. Because stderr is inherited this works even inside substitutions.
+iTerm2 can render these nicely in the UI. Use `-p` or `--progress=bar` for an animated Unicode progress bar. `run`
+uses that bar by default when stderr is connected to an interactive terminal. Because stderr is inherited this works
+even inside substitutions.
 
 Progress events can be emitted as JSON or plain text if you wish also.
 

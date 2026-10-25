@@ -60,6 +60,36 @@ class URLResolver(
         override fun close() = Unit
     }
 
+    private class ProgressInputStream(
+        input: InputStream,
+        private val tracker: ProgressReport.Tracker?,
+        archiveURI: URI,
+        private val totalBytes: Long?
+    ) : FilterInputStream(input) {
+        private val label = "Downloading ${archiveURI.path.substringAfterLast('/').ifEmpty { archiveURI.host }}"
+        private var bytesRead = 0L
+
+        override fun read(): Int {
+            val byte = `in`.read()
+            if (byte >= 0) report(1)
+            return byte
+        }
+
+        override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+            val count = `in`.read(bytes, offset, length)
+            if (count > 0) report(count.toLong())
+            return count
+        }
+
+        private fun report(count: Long) {
+            bytesRead += count
+            tracker?.report(if (totalBytes != null)
+                ProgressReport.create(label, totalBytes, bytesRead, ProgressReport.Units.BYTES)
+            else
+                ProgressReport.createIndeterminate(label))
+        }
+    }
+
     private inner class ResolutionAttempt(cache: DiskCache, private val rebuilding: Boolean = false) {
         private val refresh = this@URLResolver.refresh && !rebuilding
         // The CompleteEntryDiskCache handles the case where the user runs something like:
@@ -311,7 +341,14 @@ class URLResolver(
                             checkNotNull(previousDirectory) { "Received HTTP 304 without cached extraction for ${archive.archiveURI}" }
                             copyDirectory(previousDirectory, destination)
                         }
-                        in 200..299 -> extractStreamingTar(archiveBody, destination, minimumFreeSpaceBytes)
+                        in 200..299 -> {
+                            val total = response.header("content-length")?.toLongOrNull()?.takeIf { it >= 0 }
+                            extractStreamingTar(
+                                ProgressInputStream(archiveBody, progressTracker, archive.archiveURI, total),
+                                destination,
+                                minimumFreeSpaceBytes
+                            )
+                        }
                         else -> throw HttpStatusException(archive.archiveURI, response.statusCode)
                     }
                     // If there's junk left over at the end of the tarball, make sure that gets hashed too.

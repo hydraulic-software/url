@@ -30,6 +30,23 @@ import kotlin.test.assertTrue
 
 class URLCommandTest : URLTestSupport() {
     @Test
+    fun `short progress option selects the bar for both commands`() {
+        val url = URL()
+        CommandLine(url).parseArgs("-p")
+        assertTrue(url.resolverOptions.progressBar)
+
+        val run = Run()
+        CommandLine(run).parseArgs("-p")
+        assertTrue(run.resolverOptions.progressBar)
+    }
+
+    @Test
+    fun `run defaults to the bar while url keeps its terminal emulator mode`() {
+        assertEquals("term", URL().resolverOptions.progress)
+        assertEquals("bar", Run().resolverOptions.progress)
+    }
+
+    @Test
     fun `default cache directory uses the application namespace`() {
         assertEquals(OperatingSystemPaths.current("dev.hydraulic", "url-tool").localCache, URL().resolverOptions.cacheDirectory)
     }
