@@ -118,11 +118,7 @@ internal fun sandboxBackend(
     operatingSystem: String,
     environment: Map<String, String> = System.getenv()
 ): SandboxBackend {
-    val actualExecutable = if (executable.parent == null)
-        environment["PATH"].orEmpty().split(java.io.File.pathSeparator).asSequence()
-            .map { Path.of(it).resolve(executable).toAbsolutePath() }
-            .firstOrNull(Files::isExecutable) ?: executable
-    else executable
+    val actualExecutable = resolveExecutablePath(executable, environment["PATH"].orEmpty()) ?: executable
     return if (operatingSystem == "macos" && !isAppBundleExecutable(actualExecutable) &&
         Files.isExecutable(Path.of("/usr/bin/sandbox-exec")))
         SandboxBackend.SEATBELT else SandboxBackend.ENVIRONMENT_ONLY

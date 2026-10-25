@@ -82,7 +82,7 @@ class Run(
                 )
                 val timestamp = verifyRunPackage(context.packageDir)
                 val sources = ComposeSources()
-                val composer = Composer(cache, quarantinesResults(!resolverOptions.noGatekeeper), minimumFreeSpace, windows)
+                val composer = Composer(cache, quarantine = quarantinesResults(!resolverOptions.noGatekeeper), minimumFreeSpaceBytes = minimumFreeSpace, windows = windows)
                 val compose = { operations: List<ComposeOperation> ->
                     val (key, composed) = composer.compose(operations, sources::get)
                     opened += composed
@@ -109,10 +109,50 @@ class Run(
                     println(dryRunDescription(plan.copy(executable = executable), grant, backend))
                     0
                 } else {
-                    if (grant != null && backend == SandboxBackend.SEATBELT)
-                        runProcess(seatbeltCommand(executable, plan.arguments, grant), grant.environment, operatingSystem, executable)
-                    else
-                        runResolvedPath(executable, plan.arguments, grant?.environment ?: environment, operatingSystem)
+                    val processEnvironment = grant?.environment ?: environment
+                    val inspectionPath = resolveExecutablePath(
+                        executable, processEnvironment["PATH"] ?: System.getenv("PATH")
+                    )
+
+                    // Currently the concept of being "approved" only applies on macOS.
+                    val isMacOS = operatingSystem == "macos"
+                    val approved = if (!isMacOS) true else {
+                        // The policy Apple users have implicitly agreed to is that the OS will check binaries before
+                        // before run, and unsigned binaries will be rejected. Users can override this but the default
+                        // should follow Apple's lead.
+                        //
+                        // Bundles (.app directories) are treated slightly differently to standalone Mach-O binaries.
+                        // If the binary is inside an app bundle we should just mark it as downloaded from the internet
+                        // by setting the quarantine extended attributes and then let the OS check it.
+                        val appBundle: Path? = inspectionPath?.enclosingMacOSAppBundle()
+                        if (appBundle != null) {
+                            if (resolverOptions.noGatekeeper)
+                                appBundle.removeQuarantineTree()
+                            else
+                                appBundle.quarantineTree()
+                        }
+                        // We can also quarantine standalone Mach-O binaries but this is "wrong" because Gatekeeper
+                        // doesn't understand them. It's just a signal for us to later do our own similar checks.
+                        val standaloneMachO = appBundle == null && inspectionPath?.isMachOBinary() == true
+                        if (standaloneMachO && !resolverOptions.noGatekeeper)
+                            inspectionPath.applyGatekeeperQuarantine(enabled = true)
+                        // Shell scripts etc are auto-approved, or if the user opted out, otherwise we do our own checks.
+                        val ok = !standaloneMachO || resolverOptions.noGatekeeper || maybeDoGatekeeperLikeChecks(inspectionPath, executable)
+                        // Verified or explicitly approved standalone binaries must not retain quarantine, as otherwise
+                        // Gatekeeper will trigger and be confused by the lack of bundle structure.
+                        if (ok && standaloneMachO)
+                            inspectionPath.applyGatekeeperQuarantine(enabled = false)
+                        ok
+                    }
+
+                    if (!approved) {
+                        1
+                    } else {
+                        if (isMacOS && grant != null && backend == SandboxBackend.SEATBELT)
+                            runProcess(seatbeltCommand(executable, plan.arguments, grant), grant.environment)
+                        else
+                            runResolvedPath(executable, plan.arguments, processEnvironment)
+                    }
                 }
             } finally {
                 try {
@@ -124,6 +164,30 @@ class Run(
                 } finally {
                     opened.forEach(ResolvedURL::close)
                 }
+            }
+        }
+    }
+
+    private fun maybeDoGatekeeperLikeChecks(inspectionPath: Path, executable: Path): Boolean {
+        return when (assessMacCodeSignature(inspectionPath)) {
+            MacCodeSignatureStatus.SIGNED_AND_NOTARIZED -> true
+            MacCodeSignatureStatus.SIGNED_BUT_UNNOTARIZED -> {
+                // TODO: Submit signed-but-unnotarized binaries to a third-party notarization service.
+                //       Apple doesn't care who submits, it doesn't have to be the original developer and this is supported.
+                System.err.println("The executable $executable is signed but not notarized; refusing to run. Pass --no-gatekeeper to bypass this check.")
+                false
+            }
+
+            MacCodeSignatureStatus.UNSIGNED -> confirmUnsignedExecutable(executable)
+
+            MacCodeSignatureStatus.INVALID_SIGNATURE -> {
+                System.err.println("The executable $executable has an invalid code signature; refusing to run.")
+                false
+            }
+
+            MacCodeSignatureStatus.CHECK_UNAVAILABLE -> {
+                System.err.println("Could not check the code signature for $executable; refusing to run.")
+                false
             }
         }
     }
@@ -238,7 +302,7 @@ internal fun launchExecutable(executable: Path, windows: Boolean): Path {
 private fun URI.withExecutableSuffix(): URI {
     val text = toASCIIString()
     val (base, tail) = text.splitURLTail()
-    return URI(base + ".exe" + tail)
+    return URI("$base.exe$tail")
 }
 
 internal fun ensureHardLink(source: Path, target: Path): Boolean {
@@ -256,52 +320,65 @@ internal fun ensureHardLink(source: Path, target: Path): Boolean {
 internal fun runResolvedPath(
     path: Path,
     arguments: List<String>,
-    environment: Map<String, String> = System.getenv(),
-    operatingSystem: String = Platform.os
-): Int = runProcess(listOf(path.toString()) + arguments, environment, operatingSystem, path)
+    environment: Map<String, String> = System.getenv()
+): Int = runProcess(listOf(path.toString()) + arguments, environment)
 
-private const val EARLY_KILL_WINDOW_NANOS = 2_000_000_000L
-
-internal fun earlyNotarizationDiagnostic(
-    executable: Path,
-    operatingSystem: String,
-    exitCode: Int,
-    elapsedNanos: Long,
-    isNotarized: () -> Boolean
-): String? {
-    if (operatingSystem != "macos" || exitCode != 137 || elapsedNanos >= EARLY_KILL_WINDOW_NANOS || isNotarized())
-        return null
-    return "The executable $executable died shortly after launch. This is usually because macOS could not verify its signature and notarization. " +
-        "Please ask the developer to sign their binaries."
+internal enum class MacCodeSignatureStatus {
+    SIGNED_AND_NOTARIZED,
+    SIGNED_BUT_UNNOTARIZED,
+    UNSIGNED,
+    INVALID_SIGNATURE,
+    CHECK_UNAVAILABLE
 }
 
-internal fun isNotarized(executable: Path): Boolean = runCatching {
-    val process = ProcessBuilder(
-        "codesign", "--verify", "--strict", "-R=notarized", "--check-notarization", executable.toString()
-    ).redirectErrorStream(true).start()
+internal fun assessMacCodeSignature(executable: Path): MacCodeSignatureStatus {
+    // codesign comes with the OS, it doesn't need Xcode to be installed.
+    val notarized = runCodesignCheck(
+        "--verify", "--strict", "-R=notarized", "--check-notarization", executable.toString()
+    ) ?: return MacCodeSignatureStatus.CHECK_UNAVAILABLE
+    if (notarized)
+        return MacCodeSignatureStatus.SIGNED_AND_NOTARIZED
+
+    val validSignature = runCodesignCheck("--verify", "--strict", executable.toString())
+        ?: return MacCodeSignatureStatus.CHECK_UNAVAILABLE
+    if (validSignature)
+        return MacCodeSignatureStatus.SIGNED_BUT_UNNOTARIZED
+
+    val hasSignature = runCodesignCheck("--display", "--verbose=2", executable.toString())
+        ?: return MacCodeSignatureStatus.CHECK_UNAVAILABLE
+    return if (hasSignature) MacCodeSignatureStatus.INVALID_SIGNATURE else MacCodeSignatureStatus.UNSIGNED
+}
+
+internal fun isNotarized(executable: Path): Boolean =
+    assessMacCodeSignature(executable) == MacCodeSignatureStatus.SIGNED_AND_NOTARIZED
+
+private fun confirmUnsignedExecutable(executable: Path): Boolean {
+    val console = System.console()
+    if (console == null) {
+        System.err.println("The executable $executable is unsigned; refusing to run without an interactive console. Pass --no-gatekeeper to bypass this check.")
+        return false
+    }
+    val answer = console.readLine("The executable $executable is unsigned. Run it anyway? [y/N] ")
+    if (answer.equals("y", ignoreCase = true) || answer.equals("yes", ignoreCase = true))
+        return true
+    System.err.println("Not running unsigned executable $executable.")
+    return false
+}
+
+private fun runCodesignCheck(vararg arguments: String): Boolean? = runCatching {
+    val process = ProcessBuilder(listOf("codesign") + arguments).redirectErrorStream(true).start()
     process.inputStream.use { it.transferTo(java.io.OutputStream.nullOutputStream()) }
     process.waitFor() == 0
-}.getOrDefault(false)
+}.getOrNull()
 
 private fun runProcess(
     command: List<String>,
-    environment: Map<String, String>,
-    operatingSystem: String,
-    diagnosticExecutable: Path
-): Int {
-    val startedAt = System.nanoTime()
-    val process = ProcessBuilder(command).apply {
-        environment().clear()
-        environment().putAll(environment)
-        inheritIO()
-    }.start()
-    val exitCode = process.waitFor()
-    val diagnostic = earlyNotarizationDiagnostic(
-        diagnosticExecutable, operatingSystem, exitCode, System.nanoTime() - startedAt
-    ) { isNotarized(diagnosticExecutable) }
-    diagnostic?.let(System.err::println)
-    return exitCode
-}
+    environment: Map<String, String>
+): Int = ProcessBuilder(command).apply {
+    environment().clear()
+    environment().putAll(environment)
+    inheritIO()
+}.start().waitFor()
 
 private fun currentExecutablePath(): Path = Path.of(currentExecutableName())
 

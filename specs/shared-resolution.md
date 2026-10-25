@@ -41,15 +41,6 @@ owner, group, and other execute bits. All existing permission bits must be
 preserved. Other content and non-regular-file results must not gain execute
 permission from this rule.
 
-On macOS, the resolver must quarantine results as a web browser does, so that
-Gatekeeper assesses them before they run. Every downloaded file result and
-every file and directory created by archive extraction carries a
-`com.apple.quarantine` attribute. Extracted entries share one attribute value,
-as Archive Utility produces. Existing quarantine metadata on a cached file is
-preserved. With `--no-gatekeeper`, results must carry no quarantine metadata;
-the resolver removes it from cached files, and an archive extracted under one
-setting must not be reused under the other. Symbolic links are not marked.
-
 A hashbang text file may override the origin's HTTP cache policy with a second
 line of the form `# Cache-Control: DIRECTIVES` or `// Cache-Control:
 DIRECTIVES` (case-insensitive field name). The directive must be non-empty

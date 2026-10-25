@@ -260,12 +260,6 @@ attributes supported by the filesystem, including executable permissions on
 POSIX systems. Source directory permissions are not copied; created
 directories use the host's normal directory permissions.
 
-On macOS, an assembly receives the same Gatekeeper quarantine treatment as an
-extracted archive under the host's current setting: by default every file and
-directory in it is quarantined, and with Gatekeeper disabled none is.
-Quarantine metadata on source files is not copied. This setting is part of the
-materialization policy.
-
 Composition entries are ordinary cache entries, subject to the same eviction,
 free-space guard, and damaged-entry handling as resolver entries. Publication
 is atomic: a failed composition must not publish a partial cache entry.
@@ -302,10 +296,8 @@ Extracted selections inherit the revision of the resource supplying their
 content, including nested archive selections. A source returned by `compose`
 contributes that composition's cache identity instead of a URL. Keys include
 copy selections, destinations, replacement flags, removal paths, operation
-order, and materialization policy. The materialization policy covers every
-host setting that changes the assembled files, such as the Gatekeeper
-setting. Equivalent normalized paths and omitted default values have the same
-identity.
+order, and materialization policy. Equivalent normalized paths and omitted
+default values have the same identity.
 
 Changing an unlocked source revision invalidates dependent compositions even
 when the selected subtree is unchanged. Computing the composition key does

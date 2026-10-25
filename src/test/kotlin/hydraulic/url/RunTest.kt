@@ -1493,7 +1493,7 @@ class RunTest : URLTestSupport() {
     }
 
     @Test
-    fun `run diagnoses an unsigned binary killed immediately on macOS`() {
+    fun `run refuses an unsigned binary on macOS`() {
         assumeTrue(Platform.isMacOS)
         val directory = (tempDir / "unsigned-package.run.zip.d").createDirectories()
         val executable = directory / "unsigned-tool"
@@ -1521,29 +1521,11 @@ class RunTest : URLTestSupport() {
             System.setErr(originalError)
         }
 
-        assertEquals(137, exitCode)
+        assertEquals(1, exitCode)
         val diagnostic = stderr.toString(StandardCharsets.UTF_8)
         assertContains(diagnostic, executable.toString())
-        assertContains(diagnostic, "signature and notarization")
-    }
-
-    @Test
-    fun `early macOS SIGKILL reports a missing notarized signature`() {
-        val executable = tempDir / "mytool"
-        var checks = 0
-
-        val message = earlyNotarizationDiagnostic(executable, "macos", 137, 1_000_000_000L) {
-            checks++
-            false
-        }
-
-        assertEquals(1, checks)
-        val diagnostic = requireNotNull(message)
-        assertContains(diagnostic, executable.toString())
-        assertContains(diagnostic, "signature and notarization")
-        assertEquals(null, earlyNotarizationDiagnostic(executable, "linux", 137, 1) { error("must not check") })
-        assertEquals(null, earlyNotarizationDiagnostic(executable, "macos", 137, 2_000_000_000L) { error("must not check") })
-        assertEquals(null, earlyNotarizationDiagnostic(executable, "macos", 137, 1) { true })
+        assertContains(diagnostic, "unsigned")
+        assertContains(diagnostic, "refusing to run")
     }
 
 }

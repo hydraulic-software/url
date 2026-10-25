@@ -36,6 +36,34 @@ internal fun Path.makeExecutableIfRecognized() {
     Files.setPosixFilePermissions(this, permissions + EXECUTE_PERMISSIONS)
 }
 
+/** Whether this regular file contains a Mach-O executable rather than a script or data file. */
+internal fun Path.isMachOBinary(): Boolean {
+    if (!isRegularFile())
+        return false
+    val prefix = Files.newInputStream(this).use { it.readNBytes(8) }
+    return isMachOContent(prefix)
+}
+
+/** Returns the nearest enclosing macOS application bundle, including through a symlink. */
+internal fun Path.enclosingMacOSAppBundle(): Path? {
+    fun Path.enclosingBundle(): Path? = generateSequence(this) { it.parent }
+        .firstOrNull { it.fileName?.toString()?.endsWith(".app", ignoreCase = true) == true && Files.isDirectory(it) }
+
+    val absolute = toAbsolutePath().normalize()
+    return absolute.enclosingBundle() ?: runCatching { toRealPath().enclosingBundle() }.getOrNull()
+}
+
+/** Resolves a bare executable through [searchPath], leaving explicit paths as supplied. */
+internal fun resolveExecutablePath(executable: Path, searchPath: String?): Path? {
+    if (executable.parent != null)
+        return executable
+    if (searchPath == null)
+        return null
+    return searchPath.split(java.io.File.pathSeparator).asSequence()
+        .map { (if (it.isEmpty()) Path.of("") else Path.of(it)).resolve(executable).toAbsolutePath() }
+        .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
+}
+
 private fun isExecutableContent(prefix: ByteArray): Boolean {
     if (prefix.size >= 2 && prefix[0] == '#'.code.toByte() && prefix[1] == '!'.code.toByte())
         return true

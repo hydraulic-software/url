@@ -18,7 +18,7 @@ class ResolverOptions(private val environment: Map<String, String> = System.gete
     @Option(names = ["-r", "--refresh"], description = ["Ignore any cached HTTP response and download the resource again."])
     var refresh: Boolean = false
 
-    @Option(names = ["--no-gatekeeper"], description = ["Do not quarantine downloaded and extracted files for macOS Gatekeeper, and remove quarantine from cached files."])
+    @Option(names = ["--no-gatekeeper"], description = ["For url, omit quarantine metadata; for run, skip signature and notarization checks."])
     var noGatekeeper: Boolean = false
 
     @Option(
@@ -35,7 +35,7 @@ class ResolverOptions(private val environment: Map<String, String> = System.gete
     @Mixin
     var downloadPolicy: DownloadPolicy = DownloadPolicy()
 
-    internal fun <T> withResolver(action: (DiskCache, URLResolver, ProgressReport.Tracker?) -> T): T {
+    internal fun <T> withResolver(gatekeeper: Boolean = !noGatekeeper, action: (DiskCache, URLResolver, ProgressReport.Tracker?) -> T): T {
         val tracker = progressTracker(progress, System.err, environment, ::isStderrInteractive)
         try {
             val minimumBytes = downloadPolicy.minimumFreeSpaceBytes(environment)
@@ -44,7 +44,7 @@ class ResolverOptions(private val environment: Map<String, String> = System.gete
             preparePrivateCacheDirectory(layoutDirectory)
             return LocalDiskCache(layoutDirectory, downloadPolicy.cacheConfiguration()).open().use { cache ->
                 val transport = MinimumFreeSpaceHttpTransport(UserAgentHttpTransport(), DiskSpaceGuard(minimumBytes, layoutDirectory))
-                val resolver = URLResolver(cache, tracker, gatekeeper = !noGatekeeper, refresh = refresh,
+                val resolver = URLResolver(cache, tracker, gatekeeper = gatekeeper, refresh = refresh,
                     transport = transport, minimumFreeSpaceBytes = minimumBytes)
                 action(cache, resolver, tracker)
             }
