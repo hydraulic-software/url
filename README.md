@@ -143,16 +143,18 @@ a shell wrapper.
 
 Because of the caching, this means the program at `foobar.com` will keep itself up to date automatically.
 
-During development, pass a local launcher directory to bypass URL resolution
-and the cache. The directory must contain `run.js`, and `run` forwards all
-remaining arguments:
+During development, pass a local launcher directory or `run.zip` file to bypass
+URL resolution and the cache. A directory must contain `run.js`; a zip file
+must contain `run.js` at its root. `run` forwards all remaining arguments:
 
 ```shell
 $ run ./run.zip.d --help
+$ run ./run.zip --help
 ```
 
 Paths beginning with `./`, `../`, or `/` are always treated as local paths;
-missing paths fail instead of being interpreted as URLs.
+missing paths fail instead of being interpreted as URLs. A local `run.zip` is
+extracted to a temporary directory for the duration of the command.
 
 The black-box compliance checks can be run against a native executable with
 `RUN_BIN=./build/native/nativeCompile/run python3 scripts/run-compliance.py`.

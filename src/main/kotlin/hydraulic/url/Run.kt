@@ -30,7 +30,7 @@ class Run(
     private val architecture: String = runArchitecture(),
     private val clock: java.time.Clock = java.time.Clock.systemUTC()
 ) : Callable<Int> {
-    @Parameters(index = "0", arity = "0..1", paramLabel = "URL_OR_DIRECTORY")
+    @Parameters(index = "0", arity = "0..1", paramLabel = "URL_OR_PACKAGE")
     var url: String? = null
 
     @Parameters(index = "1..*", paramLabel = "ARG")
@@ -57,19 +57,20 @@ class Run(
             return 0
         }
 
-        val target = parseRunTarget(requireNotNull(url) { "A URL or local directory is required" })
-        val localPackage = localRunPackage(target.locator)
+        val target = parseRunTarget(requireNotNull(url) { "A URL, local directory, or run.zip file is required" })
         return resolverOptions.withResolver { cache, resolver, _ ->
             val minimumFreeSpace = resolverOptions.downloadPolicy.minimumFreeSpaceBytes(environment)
             val opened = ConcurrentLinkedQueue<ResolvedURL>()
-            var temporaryDirectory: Path? = null
+            var sandboxTemporaryDirectory: Path? = null
+            var localPackage: LocalRunPackage? = null
             try {
+                localPackage = localRunPackage(target.locator)
                 val packageResource = if (localPackage == null)
                     resolver.resolve(runTargetURI(parseURL(target.locator)))
                 else
                     null
                 packageResource?.let { opened += it }
-                val packagePath = localPackage ?: packageResource!!.path.toAbsolutePath()
+                val packagePath = localPackage?.scriptPath ?: packageResource!!.path.toAbsolutePath()
                 val context = RunContext(
                     os = operatingSystem,
                     arch = architecture,
@@ -98,7 +99,7 @@ class Run(
                 val grant = plan.permissions?.let { requested ->
                     val revision = selectRevision(timestamp, requested.semantics, java.time.LocalDate.now(clock))
                     val temporary = Files.createTempDirectory("hydraulic-run-").toRealPath()
-                    temporaryDirectory = temporary
+                    sandboxTemporaryDirectory = temporary
                     buildSandboxGrant(requested, revision, context, opened.map { it.entryDirectory },
                         temporary, environment, windows)
                 }
@@ -115,7 +116,11 @@ class Run(
                 }
             } finally {
                 try {
-                    temporaryDirectory?.let(::deleteSandboxTemporaryDirectory)
+                    try {
+                        sandboxTemporaryDirectory?.let(::deleteSandboxTemporaryDirectory)
+                    } finally {
+                        localPackage?.temporaryDirectory?.let(::deleteSandboxTemporaryDirectory)
+                    }
                 } finally {
                     opened.forEach(ResolvedURL::close)
                 }
@@ -144,20 +149,36 @@ internal fun runArchitecture(architecture: String = System.getProperty("os.arch"
         else -> architecture.lowercase(Locale.ROOT)
     }
 
-internal fun localRunPackage(target: String): Path? {
+internal data class LocalRunPackage(val scriptPath: Path, val temporaryDirectory: Path? = null)
+
+internal fun localRunPackage(target: String): LocalRunPackage? {
     val path = runCatching { Path.of(target) }.getOrNull()
     if (path == null) {
         require(!looksLikeLocalPath(target)) { "Invalid local run path: $target" }
         return null
     }
     val directory = path.takeIf(Files::isDirectory)
-    if (directory == null) {
-        require(!looksLikeLocalPath(target)) { "Local run directory does not exist: $path" }
-        return null
+    if (directory != null) {
+        val packagePath = directory.resolve("run.js").toAbsolutePath()
+        require(Files.isRegularFile(packagePath)) { "Local run directory does not contain run.js: $directory" }
+        return LocalRunPackage(packagePath)
     }
-    val packagePath = directory.resolve("run.js").toAbsolutePath()
-    require(Files.isRegularFile(packagePath)) { "Local run directory does not contain run.js: $directory" }
-    return packagePath
+
+    if (Files.isRegularFile(path) && path.fileName.toString().endsWith(".zip", ignoreCase = true)) {
+        val extractionDirectory = Files.createTempDirectory("hydraulic-run-package-").toRealPath()
+        try {
+            extractSafeLocalArchive(path, extractionDirectory)
+            val packagePath = extractionDirectory.resolve("run.js")
+            require(Files.isRegularFile(packagePath)) { "Local run archive does not contain run.js: $path" }
+            return LocalRunPackage(packagePath, extractionDirectory)
+        } catch (e: Exception) {
+            deleteSandboxTemporaryDirectory(extractionDirectory)
+            throw e
+        }
+    }
+
+    require(!looksLikeLocalPath(target)) { "Local run directory does not exist: $path" }
+    return null
 }
 
 private fun looksLikeLocalPath(target: String): Boolean =

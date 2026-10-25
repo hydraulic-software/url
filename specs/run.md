@@ -11,10 +11,13 @@ The `run` command takes as its first argument either:
 
 1. An HTTP or HTTPS URL. If the scheme is missing, `https://` is inferred. `/run.zip/` is appended to a directory-like URL, including one without a trailing slash when its final path component has no filename suffix, and the resulting resource is resolved using the algorithm defined in the [shared resolution specification](shared-resolution.md).
 2. A directory containing the same files that a `run.zip` package would contain.
+3. A local `.zip` file containing a `run.js` file at its root. The archive is
+   safely extracted to a temporary directory for evaluation and removed when
+   the command exits.
 
 An explicitly relative path beginning with `./` or `../`, or an absolute path,
-is always treated as a local directory. A missing explicit local directory is
-an error and is not converted into a URL.
+is always treated as a local path. A missing explicit local path is an error and
+is not converted into a URL. A local zip path must name an existing `.zip` file.
 
 The URL or directory name can have a version string after an `@` character. The version is exposed to the package as `context.ver`.
 

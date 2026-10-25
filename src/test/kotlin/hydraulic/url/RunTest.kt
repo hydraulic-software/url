@@ -619,8 +619,22 @@ class RunTest : URLTestSupport() {
         val script = directory / "run.js"
         script.writeText("await urls({}); export default { executable: \"/bin/true\", arguments: [] };\n")
 
-        assertEquals(script.toAbsolutePath(), localRunPackage(directory.toString()))
+        assertEquals(script.toAbsolutePath(), localRunPackage(directory.toString())?.scriptPath)
         assertEquals(null, localRunPackage("missing-run-package"))
+    }
+
+    @Test
+    fun `run extracts the JavaScript package from a local zip file`() {
+        val archive = tempDir / "run.zip"
+        archive.writeBytes(zipOf("run.js" to "export default { executable: \"/bin/true\", arguments: [] };\n"))
+
+        val localPackage = requireNotNull(localRunPackage(archive.toString()))
+        try {
+            assertEquals("export default { executable: \"/bin/true\", arguments: [] };\n", localPackage.scriptPath.readText())
+            assertEquals(localPackage.temporaryDirectory, localPackage.scriptPath.parent)
+        } finally {
+            localPackage.temporaryDirectory?.let(::deleteSandboxTemporaryDirectory)
+        }
     }
 
     @Test
