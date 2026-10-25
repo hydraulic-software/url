@@ -29,6 +29,13 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class RunTest : URLTestSupport() {
+    private fun samplePackage(name: String): Path {
+        val destination = tempDir / name / "run.zip.d"
+        val source = Path.of(System.getProperty("run.samples.directory"), name, "run.zip.d")
+        source.toFile().copyRecursively(destination.toFile(), overwrite = true)
+        return destination.resolve("run.js").toAbsolutePath()
+    }
+
     private fun permissionsPlan(permissions: String?): LaunchPlan {
         val directory = (tempDir / "permissions-package").createDirectories()
         val file = directory / "run.js"
@@ -462,7 +469,7 @@ class RunTest : URLTestSupport() {
 
     @Test
     fun `bare launch-plan executables use the host command search path`() {
-        val packageFile = Path.of("site/r/demo/run.zip.d/run.js").toAbsolutePath()
+        val packageFile = samplePackage("demo")
         val packageDir = packageFile.parent
         val plan = evaluateRunJavaScript(
             packageFile,
@@ -786,7 +793,7 @@ class RunTest : URLTestSupport() {
 
     @Test
     fun `make-run-zip JavaScript selects the portable zip fallback`() {
-        val packageFile = Path.of("site/r/make-run-zip/run.zip.d/run.js").toAbsolutePath()
+        val packageFile = samplePackage("make-run-zip")
         val packageDir = packageFile.parent
         val requested = Collections.synchronizedList(mutableListOf<String>())
         val plan = evaluateRunJavaScript(
@@ -1039,7 +1046,7 @@ class RunTest : URLTestSupport() {
 
     @Test
     fun `cel verifier JavaScript produces portable launch plans`() {
-        val packageFile = Path.of("site/r/cel-verifier/run.zip.d/run.js").toAbsolutePath()
+        val packageFile = samplePackage("cel-verifier")
         val packageDir = packageFile.parent
         val java = tempDir / "java"
         val javaExe = tempDir / "java.exe"
@@ -1054,7 +1061,7 @@ class RunTest : URLTestSupport() {
             if ("verifier-cli" in url) verifier else java
         }
         assertTrue(macUrls.single { "graalvm" in it }.contains(
-            "graalvm-jdk-25_macos-aarch64_bin.tar.gz/graalvm-jdk-25.0.4+7.1/Contents/Home/bin/java#sha256="
+            "graalvm-jdk-25.0.4_macos-aarch64_bin.tar.gz/graalvm-jdk-25.0.4+7.1/Contents/Home/bin/java#sha256="
         ))
         assertTrue(macUrls.single { "verifier-cli" in it }.endsWith(
             "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
@@ -1080,7 +1087,7 @@ class RunTest : URLTestSupport() {
             if ("verifier-cli" in url) verifier else javaExe
         }
         assertTrue(windowsUrls.single { "graalvm" in it }.contains(
-            "graalvm-jdk-25_windows-x64_bin.zip/graalvm-jdk-25.0.4+7.1/bin/java#sha256="
+            "graalvm-jdk-25.0.4_windows-x64_bin.zip/graalvm-jdk-25.0.4+7.1/bin/java#sha256="
         ))
         assertTrue(windowsUrls.single { "verifier-cli" in it }.endsWith(
             "/0.14.0/verifier-cli-0.14.0.jar#sha256=25dae07dedab8b5997c3f08b798ce432ed8115bd8e782630c2db4dfaff064c2b"
@@ -1120,7 +1127,7 @@ class RunTest : URLTestSupport() {
 
     @Test
     fun `unknown GraalVM versions are not hashlocked`() {
-        val sourceDirectory = Path.of("site/r/cel-verifier/run.zip.d").toAbsolutePath()
+        val sourceDirectory = Path.of("site/r/shared").toAbsolutePath()
         val directory = (tempDir / "run.zip.d").createDirectories()
         Files.copy(sourceDirectory / "graalvm.js", directory / "graalvm.js")
         Files.copy(sourceDirectory / "utils.js", directory / "utils.js")
@@ -1141,7 +1148,7 @@ class RunTest : URLTestSupport() {
             tempDir / "java"
         }
 
-        assertContains(requested, "/graalvm-jdk-25_linux-x64_bin.tar.gz/graalvm-jdk-25.0.5+7.2/bin/java")
+        assertContains(requested, "/graalvm-jdk-25.0.5_linux-x64_bin.tar.gz/graalvm-jdk-25.0.5+7.2/bin/java")
         assertFalse(requested.contains("#sha256="))
     }
 

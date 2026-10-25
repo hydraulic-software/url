@@ -2,6 +2,7 @@ import org.gradle.api.tasks.testing.Test
 import org.gradle.jvm.application.tasks.CreateStartScripts
 
 plugins {
+    id("hydraulic.url.run-samples")
     id("hydraulic.kotlin-common-conventions")
     id("org.graalvm.buildtools.native") version "1.1.9"
     kotlin("kapt")

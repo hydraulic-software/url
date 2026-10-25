@@ -1,3 +1,5 @@
+import { isWindows } from "./utils.js";
+
 // These are pinned fallback binaries. Unix requires a local openssl because
 // portable OpenSSL archives are not published from a stable upstream source;
 // it only needs a downloaded zip tool when the host has no zip command.
@@ -31,12 +33,12 @@ if (platformAssets === undefined)
   throw new Error(`make-run-zip does not support ${context.os}-${context.arch}`);
 
 const resolved = await urls(platformAssets);
-const script = `${context.packageDir}/make-run-zip.${context.os === "windows" ? "ps1" : "sh"}`;
-const argumentsFor = context.os === "windows"
+const script = `${context.packageDir}/make-run-zip.${isWindows ? "ps1" : "sh"}`;
+const argumentsFor = isWindows
   ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, resolved.openssl, resolved.zip, ...context.args]
   : [resolved.zip, ...context.args];
 
 export default {
-  executable: context.os === "windows" ? "powershell.exe" : script,
+  executable: isWindows ? "powershell.exe" : script,
   arguments: argumentsFor,
 };

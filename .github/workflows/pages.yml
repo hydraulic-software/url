@@ -6,6 +6,11 @@ on:
     paths:
       - site/**
       - .agents/skills/**
+      - gradle/**
+      - build-logic/**
+      - gradlew
+      - settings.gradle.kts
+      - build-standalone.gradle.kts
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -26,19 +31,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # Each run package is authored as a directory so it can be tested and
-      # edited directly. Publish the corresponding ZIP beside each package.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      # Assemble sample sources with their shared helpers, then publish each
+      # self-contained ZIP beside its source directory.
       - name: Package run tools
         run: |
-          find site/r -type d -name 'run.zip.d' -print0 |
-            while IFS= read -r -d '' package; do
-              echo "Packaging $package"
-              (
-                cd "$package"
-                zip -X -r ../run.zip . \
-                  -x context.d.ts '*/context.d.ts' timestamp.tsr
-              )
-            done
+          ./gradlew packageRunSamples
+          for package in build/run-packages/*; do
+            cp "$package/run.zip" "site/r/$(basename "$package")/run.zip"
+          done
       # Agent skills are authored in .agents/skills. Publish each as browsable
       # files and as a ZIP whose top-level directory is the skill's name.
       - name: Package agent skills
