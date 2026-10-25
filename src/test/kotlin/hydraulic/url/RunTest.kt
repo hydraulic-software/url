@@ -297,6 +297,15 @@ class RunTest : URLTestSupport() {
     }
 
     @Test
+    fun `Seatbelt allows child processes to allocate a pseudo terminal`() {
+        val (exitCode, output) = seatbeltTool(
+            "/usr/bin/script", listOf("-q", "/dev/null", "/usr/bin/printf", "pty works"), "{}"
+        )
+        assertEquals(0, exitCode, output)
+        assertContains(output, "pty works")
+    }
+
+    @Test
     fun `Seatbelt denies network by default and permits declared clients`() {
         assumeTrue(Platform.isMacOS)
         withServer { server ->
@@ -357,6 +366,10 @@ class RunTest : URLTestSupport() {
         assertFalse(profile.source.contains("evil"))
         assertTrue(profile.parameters.values.any { "evil" in it })
         assertContains(profile.source, "com.apple.dnssd.service")
+        assertContains(profile.source, "(allow ipc-posix-sem (semaphore-owner self))")
+        assertContains(profile.source, "(allow pseudo-tty)")
+        assertContains(profile.source, "(literal \"/dev/ptmx\")")
+        assertContains(profile.source, "(extension \"com.apple.sandbox.pty\")")
         assertFalse(profile.source.contains("LaunchServices"))
         assertTrue(isAppBundleExecutable(Path.of("/Applications/Example.app/Contents/MacOS/tool")))
         assertEquals(SandboxBackend.ENVIRONMENT_ONLY,

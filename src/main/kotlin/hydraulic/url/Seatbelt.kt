@@ -20,6 +20,12 @@ internal fun seatbeltProfile(grant: SandboxGrant): SeatbeltProfile {
         appendLine("(allow file-read-metadata (vnode-type DIRECTORY SYMLINK))")
         appendLine("(allow file-read* (vnode-type SYMLINK))")
         appendLine("(allow signal (target self) (target children))")
+        // GraalVM's POSIX signal dispatcher uses a private named semaphore on macOS.
+        appendLine("(allow ipc-posix-sem (semaphore-owner self))")
+        // Match Apple's application profile: allow PTY creation, but only its master and leased slave nodes.
+        appendLine("(allow pseudo-tty)")
+        appendLine("(allow file-read* file-write* file-ioctl (literal \"/dev/ptmx\"))")
+        appendLine("(allow file-read* file-write* (require-all (regex \"^/dev/ttys[0-9]*\") (extension \"com.apple.sandbox.pty\")))")
         fun path(operations: String, path: Path, recursive: Boolean) {
             val name = "PATH_${parameters.size}"
             parameters[name] = path.toString()
