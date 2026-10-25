@@ -110,9 +110,9 @@ class Run(
                     0
                 } else {
                     if (grant != null && backend == SandboxBackend.SEATBELT)
-                        runProcess(seatbeltCommand(executable, plan.arguments, grant), grant.environment)
+                        runProcess(seatbeltCommand(executable, plan.arguments, grant), grant.environment, operatingSystem, executable)
                     else
-                        runResolvedPath(executable, plan.arguments, grant?.environment ?: environment)
+                        runResolvedPath(executable, plan.arguments, grant?.environment ?: environment, operatingSystem)
                 }
             } finally {
                 try {
@@ -256,15 +256,52 @@ internal fun ensureHardLink(source: Path, target: Path): Boolean {
 internal fun runResolvedPath(
     path: Path,
     arguments: List<String>,
-    environment: Map<String, String> = System.getenv()
-): Int = runProcess(listOf(path.toString()) + arguments, environment)
+    environment: Map<String, String> = System.getenv(),
+    operatingSystem: String = Platform.os
+): Int = runProcess(listOf(path.toString()) + arguments, environment, operatingSystem, path)
 
-private fun runProcess(command: List<String>, environment: Map<String, String>): Int =
-    ProcessBuilder(command).apply {
+private const val EARLY_KILL_WINDOW_NANOS = 2_000_000_000L
+
+internal fun earlyNotarizationDiagnostic(
+    executable: Path,
+    operatingSystem: String,
+    exitCode: Int,
+    elapsedNanos: Long,
+    isNotarized: () -> Boolean
+): String? {
+    if (operatingSystem != "macos" || exitCode != 137 || elapsedNanos >= EARLY_KILL_WINDOW_NANOS || isNotarized())
+        return null
+    return "The executable $executable died shortly after launch. This is usually because macOS could not verify its signature and notarization. " +
+        "Please ask the developer to sign their binaries."
+}
+
+internal fun isNotarized(executable: Path): Boolean = runCatching {
+    val process = ProcessBuilder(
+        "codesign", "--verify", "--strict", "-R=notarized", "--check-notarization", executable.toString()
+    ).redirectErrorStream(true).start()
+    process.inputStream.use { it.transferTo(java.io.OutputStream.nullOutputStream()) }
+    process.waitFor() == 0
+}.getOrDefault(false)
+
+private fun runProcess(
+    command: List<String>,
+    environment: Map<String, String>,
+    operatingSystem: String,
+    diagnosticExecutable: Path
+): Int {
+    val startedAt = System.nanoTime()
+    val process = ProcessBuilder(command).apply {
         environment().clear()
         environment().putAll(environment)
         inheritIO()
-    }.start().waitFor()
+    }.start()
+    val exitCode = process.waitFor()
+    val diagnostic = earlyNotarizationDiagnostic(
+        diagnosticExecutable, operatingSystem, exitCode, System.nanoTime() - startedAt
+    ) { isNotarized(diagnosticExecutable) }
+    diagnostic?.let(System.err::println)
+    return exitCode
+}
 
 private fun currentExecutablePath(): Path = Path.of(currentExecutableName())
 

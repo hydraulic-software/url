@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import picocli.CommandLine
 import java.net.URI
+import java.io.ByteArrayOutputStream
+import java.io.PrintStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.nio.file.Files
@@ -1488,6 +1490,60 @@ class RunTest : URLTestSupport() {
 
         assertEquals(0, runResolvedPath(script, listOf("--help", "two words")))
         assertEquals("--help\ntwo words\n", output.readText())
+    }
+
+    @Test
+    fun `run diagnoses an unsigned binary killed immediately on macOS`() {
+        assumeTrue(Platform.isMacOS)
+        val directory = (tempDir / "unsigned-package.run.zip.d").createDirectories()
+        val executable = directory / "unsigned-tool"
+        RunTest::class.java.getResourceAsStream("/unsigned-run-package.run.zip.d/unsigned-tool")!!
+            .use { Files.copy(it, executable) }
+        executable.toFile().setExecutable(true)
+        assertFalse(isNotarized(executable), "The test binary must not pass notarization verification")
+        RunTest::class.java.getResourceAsStream("/unsigned-run-package.run.zip.d/run.js")!!
+            .use { Files.copy(it, directory.resolve("run.js")) }
+
+        val run = Run(
+            executablePath = { tempDir / "run" },
+            windows = false,
+            operatingSystem = "macos",
+            architecture = runArchitecture()
+        )
+        val stderr = ByteArrayOutputStream()
+        val originalError = System.err
+        val exitCode = try {
+            System.setErr(PrintStream(stderr, true, StandardCharsets.UTF_8))
+            CommandLine(run).setStopAtPositional(true).execute(
+                "--cache-dir", tempDir.resolve("unsigned-run-cache").toString(), directory.toString()
+            )
+        } finally {
+            System.setErr(originalError)
+        }
+
+        assertEquals(137, exitCode)
+        val diagnostic = stderr.toString(StandardCharsets.UTF_8)
+        assertContains(diagnostic, executable.toString())
+        assertContains(diagnostic, "signature and notarization")
+    }
+
+    @Test
+    fun `early macOS SIGKILL reports a missing notarized signature`() {
+        val executable = tempDir / "mytool"
+        var checks = 0
+
+        val message = earlyNotarizationDiagnostic(executable, "macos", 137, 1_000_000_000L) {
+            checks++
+            false
+        }
+
+        assertEquals(1, checks)
+        val diagnostic = requireNotNull(message)
+        assertContains(diagnostic, executable.toString())
+        assertContains(diagnostic, "signature and notarization")
+        assertEquals(null, earlyNotarizationDiagnostic(executable, "linux", 137, 1) { error("must not check") })
+        assertEquals(null, earlyNotarizationDiagnostic(executable, "macos", 137, 2_000_000_000L) { error("must not check") })
+        assertEquals(null, earlyNotarizationDiagnostic(executable, "macos", 137, 1) { true })
     }
 
 }
