@@ -96,7 +96,7 @@ class RunTest : URLTestSupport() {
         assertEquals(listOf((tempDir / "cache/ai.qxotic.jinfer").toString(), "hello.wav"), speak.permissions?.write)
         assertEquals(speakArgs, speak.arguments.takeLast(speakArgs.size))
 
-        val transcribe = jinferPlan(listOf("--model", "parakeet.gguf", "transcribe", "--threads", "4", "recording.wav"),
+        val transcribe = jinferPlan(listOf("--model", "parakeet.gguf", "transcribe", "--threads", "4", "--", "recording.wav"),
             tempDir / "cache")
         assertEquals(listOf("parakeet.gguf", "recording.wav"), transcribe.permissions?.read)
 
