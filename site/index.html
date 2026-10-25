@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="url caches HTTP resources as local paths. run executes remote tools.">
-    <title>url — HTTP on demand in your shell</title>
+    <title>runurl — HTTP on demand in your shell</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.css">
 </head>
@@ -23,7 +23,7 @@
     <section class="intro" id="cache">
         <h1>HTTP on demand<br><em>in your shell</em></h1>
         <p class="lede"><code>url</code> downloads an HTTP resource to a disk cache and prints its local path.
-            <code>run</code> does that, then executes it.</p>
+            <code>run</code> does that, then executes the target securely.</p>
         <div class="terminal" aria-label="Resolve a URL to a local path">
             <div class="terminal-top"><span>sh</span>
                 <button type="button" data-copy="chafa `url https://omarchy.org/brand/omarchy-wordmark.svg`">copy
@@ -41,6 +41,16 @@
     </section>
 
     <section class="features" aria-label="How it works">
+        <article class="feature" id="spec">
+            <div class="feature-copy">
+                <h2>Reimplementable</h2>
+                <p class="aside">Don't like this implementation? No problem.</p>
+                <p class="aside">Give the <a
+                        href="https://github.com/hydraulic-software/url/blob/master/specs/README.md">specification</a>
+                    to your favourite model and make a better one that's drop-in compatible.</p>
+            </div>
+        </article>
+
         <article class="feature" id="archives">
             <div class="feature-copy">
                 <h2>Link inside archives</h2>
@@ -48,47 +58,11 @@
                     and the path is printed.</p>
             </div>
             <div class="command">
-          <pre><span class="prompt">$</span> ls `url downloads.hydraulic.dev/conveyor/conveyor-22.2-linux-amd64.tar.gz/lib`
+                <pre><span class="prompt">$</span> ls `url downloads.hydraulic.dev/conveyor/conveyor-22.2-linux-amd64.tar.gz/lib`
 <span class="reply">app&nbsp;&nbsp;&nbsp;runtime</span></pre>
             </div>
-        </article>
-
-        <article class="feature" id="run">
             <div class="feature-copy">
-                <h2>Execute URLs directly</h2>
-                <p class="aside"><code>run</code> appends <code>/run.zip/run.js</code>, resolves the package's
-                    URLs, then executes its launch plan.</p>
-            </div>
-            <div class="command">
-                <p class="command-label">sh</p>
-                <pre><span class="prompt">$</span> run https://hydraulic-software.github.io/url/ hello
-<span class="reply">Hello from run.zip.
-argument: hello</span></pre>
-                <a class="source-link" href="https://github.com/hydraulic-software/url/tree/master/site/r/demo">inspect
-                    the package ↗</a>
-            </div>
-            <div class="feature-copy">
-                <p class="aside">On <code>zsh</code> just use an HTTPS URL as a command directly.</p>
-            </div>
-            <div class="command">
-                <p class="command-label">zsh</p>
-                <pre><span class="prompt">$</span> https://hydraulic-software.github.io/url/ hello
-<span class="reply">Hello from run.zip.
-argument: hello</span></pre>
-            </div>
-            <div class="feature-copy">
-                <p class="aside">The <code>run.js</code> file detects the running OS and produces the right
-                    launch plan.</p>
-            </div>
-            <div class="feature-copy">
-                <p class="aside">Writing a package? Give your agent the
-                    <a href="skills/run-tutorial/SKILL.md">run-tutorial skill</a>, which explains the format and its
-                    conventions.</p>
-            </div>
-            <div class="command">
-                <p class="command-label">sh</p>
-                <pre><span class="prompt">$</span> mkdir -p .agents/skills
-<span class="prompt">$</span> cp -R "$(url hydraulic-software.github.io/url/skills/run-tutorial.zip/run-tutorial/)" .agents/skills/</pre>
+                Many codecs are supported, including zstd.
             </div>
         </article>
 
@@ -109,7 +83,8 @@ argument: hello</span></pre>
         <article class="feature" id="file-lists">
             <div class="feature-copy">
                 <h2>Resolve in bulk</h2>
-                <p class="aside">Multiple URLs are downloaded in parallel. Comments and blank lines are ignored, so the input doubles as a small lockfile.</p>
+                <p class="aside">Multiple URLs are downloaded in parallel. Comments and blank lines are ignored, so the
+                    input doubles as a small lockfile.</p>
             </div>
             <div class="command">
                 <p class="command-label">sh</p>
@@ -123,12 +98,65 @@ EOF
 <span class="reply">…/content/a
 …/content/b</span></pre>
             </div>
+            <div class="feature-copy">
+                Name the URLs to get variable assignments suitable for evaluation in shell scripts.
+            </div>
+            <div class="command">
+                <p class="command-label">sh</p>
+                <pre><span class="prompt">$</span> url &lt;&lt;'EOF'
+a=https://a.example/a#sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+b=https://b.example/b#sha256=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+EOF
+<span class="reply">a=…/content/a
+b=…/content/b</span></pre>
+
+            </div>
+        </article>
+
+        <article class="feature" id="run">
+            <div class="feature-copy">
+                <h2>Execute URLs directly</h2>
+                <p class="aside"><code>run</code> appends <code>/run.zip/run.js</code> and executes that script inside a
+                    sandbox to compute a launch plan.</p>
+            </div>
+            <div class="command">
+                <p class="command-label">sh</p>
+                <pre><span class="prompt">$</span> run hydraulic-software.github.io/url/ hello
+<span class="reply">Hello from run.zip.
+argument: hello</span></pre>
+                <a class="source-link" href="https://github.com/hydraulic-software/url/tree/master/site/r/demo">inspect
+                    the package ↗</a>
+            </div>
+            <div class="feature-copy">
+                <p class="aside">On <code>zsh</code> just use an HTTPS URL as a command directly.</p>
+            </div>
+            <div class="command">
+                <p class="command-label">zsh</p>
+                <pre><span class="prompt">$</span> hydraulic-software.github.io/url hello
+<span class="reply">Hello from run.zip.
+argument: hello</span></pre>
+            </div>
+            <div class="feature-copy">
+                <p class="aside">The <code>run.js</code> file knows the OS/CPU arch, can download more URLs to the disk
+                    cache and returns how to start the program.</p>
+            </div>
+            <div class="feature-copy">
+                <p class="aside">Writing a package? Give your agent the
+                    <a href="skills/run-tutorial/SKILL.md">run-tutorial skill</a>, which explains the format and its
+                    conventions.</p>
+            </div>
+            <div class="command">
+                <p class="command-label">sh</p>
+                <pre><span class="prompt">$</span> mkdir -p .agents/skills
+<span class="prompt">$</span> cp -R "$(url hydraulic-software.github.io/url/skills/run-tutorial.zip/run-tutorial/)" .agents/skills/</pre>
+            </div>
         </article>
 
         <article class="feature" id="progress">
             <div class="feature-copy">
                 <h2>Watch a download</h2>
-                <p class="aside">Use <code>--progress=bar</code> for an animated Unicode progress bar while <code>url</code> downloads.</p>
+                <p class="aside">Use <code>--progress=bar</code> for an animated Unicode progress bar while
+                    <code>url</code> downloads.</p>
             </div>
             <div class="command cast-command">
                 <p class="command-label">sh · asciicast</p>
@@ -136,13 +164,6 @@ EOF
             </div>
         </article>
 
-        <article class="feature" id="spec">
-            <div class="feature-copy">
-                <h2>Reimplementable</h2>
-                <p class="aside">Don't like the reference implementation? No problem.</p>
-                <p class="aside">Give the <a href="https://github.com/hydraulic-software/url/blob/master/specs/README.md">specification</a> to your favourite model and make a better one.</p>
-            </div>
-        </article>
     </section>
 </main>
 
