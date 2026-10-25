@@ -3,6 +3,9 @@
 - `url` downloads the given URL to a disk cache and prints its path.
 - `run` takes a URL, appends a well-known path and executes what it finds there, with `zsh` integration so you can run URLs directly.
 
+The [specifications](specs/README.md) separate the `url` command, the `run` command,
+and their shared URL resolution contract.
+
 To learn how to publish software for `run` [read this user guide](.agents/skills/run-tutorial/SKILL.md).
 It's also an agent skill, which you can install into a project with:
 
@@ -207,7 +210,7 @@ private temporary directories; file and network enforcement is deferred. Normal
 launches do not warn about permissions the platform cannot enforce; dry runs
 show enforcement status. Semantics use the verified package timestamp date, or
 the current UTC date, with `std.semantics` allowing an opt-in to later rules.
-See [SPEC-RUN.md](SPEC-RUN.md) for the permission contract.
+See [specs/run.md](specs/run.md) for the permission contract.
 
 Every call starts immediately and runs concurrently with the others, so
 modules imported side by side resolve their URLs in parallel without
@@ -234,7 +237,7 @@ const app = await compose([
 
 The result is cached by its recipe and the identity of its sources, so it is
 rebuilt only when the recipe changes or an unlocked source is downloaded again.
-See [`SPEC-RUN.md`](SPEC-RUN.md) for the exact copy, path and symbolic link rules.
+See [`specs/run.md`](specs/run.md) for the exact copy, path and symbolic link rules.
 
 Packages may import other JavaScript files from their own directory using
 relative ECMAScript module imports.

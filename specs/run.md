@@ -1,8 +1,15 @@
-# Spec for the `run` command
+# `run` command specification
+
+This document defines run-package evaluation and process launching. Resource
+fetching follows the [shared resolution contract](shared-resolution.md).
+The [`url` command-line interface](url.md) is specified separately.
+
+Requirements using **must**, **must not**, **should**, and **may** are normative.
+Examples and implementation notes are informative.
 
 The `run` command takes as its first argument either:
 
-1. An HTTP or HTTPS URL. If the scheme is missing, `https://` is inferred. `/run.zip/` is appended to a directory-like URL, including one without a trailing slash when its final path component has no filename suffix, and the resulting resource is resolved using the algorithm defined in the [URL spec](SPEC.md).
+1. An HTTP or HTTPS URL. If the scheme is missing, `https://` is inferred. `/run.zip/` is appended to a directory-like URL, including one without a trailing slash when its final path component has no filename suffix, and the resulting resource is resolved using the algorithm defined in the [shared resolution specification](shared-resolution.md).
 2. A directory containing the same files that a `run.zip` package would contain.
 
 An explicitly relative path beginning with `./` or `../`, or an absolute path,
@@ -110,7 +117,7 @@ error: for example, a module that awaits a promise which no outstanding host
 operation can settle, or a `compose` call, awaited or not, with a `from`
 promise that never settles.
 
-URL values are passed to the ordinary URL resolver unchanged, including archive members and `#sha256=` fragments. On Windows, an executable URL may omit its final `.exe` suffix; resolution retries with `.exe` when the original resource or archive member is missing.
+URL values are passed to the [shared URL resolver](shared-resolution.md) unchanged, including archive members and `#sha256=` fragments. On Windows, an executable URL may omit its final `.exe` suffix; resolution retries with `.exe` when the original resource or archive member is missing.
 
 The JavaScript package cannot access host classes, arbitrary files, sockets, environment variables, native APIs, processes, or threads. The module loader may read imported JavaScript files from within the package. Implementations may use a JavaScript engine embedded in the host or a separate JavaScript subprocess, but must preserve this capability boundary and must not grant the package a direct process-execution function.
 
@@ -460,6 +467,12 @@ with `/` separators, sorts records by path bytes, and records each regular
 file's SHA-256 digest as `<digest>  <path>` followed by LF. Package paths may
 not contain newline characters, duplicate entries are invalid, and symbolic
 links are not part of this format.
+
+When verifying a run package timestamp, manifest paths must be constructed
+from filesystem path components joined with `/`. Components containing
+literal backslashes, carriage returns, or newlines must be rejected, so a
+Unix filename cannot authenticate as a different nested path. These rules
+also apply to the supplied Unix package builder.
 
 Package builders may omit files named `context.d.ts` as a convenience. If such
 a file is present in a package, it is included in the manifest and validated

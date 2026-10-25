@@ -5,13 +5,15 @@
 `url` is a Kotlin command-line tool that resolves HTTP(S) resources into a
 local disk cache. The same executable also exposes `run`, which resolves and
 executes remote tools. The script-facing compatibility contract is defined in
-[`SPEC.md`](SPEC.md); treat it as authoritative when changing behavior.
+the [specifications](specs/README.md); treat them as authoritative when changing
+behavior.
 
 ## Layout
 
 - `src/main/kotlin/hydraulic/url/`: CLI, URL resolution, runner, and shell setup.
 - `src/test/kotlin/hydraulic/url/URLResolverTest.kt`: unit and local HTTP-server
   integration tests.
+- `specs/`: command contracts and shared URL resolution requirements.
 - `site/`: static project website and interactive demo assets.
 - `build-standalone.gradle.kts`: self-contained build used by this repository.
 - `build.gradle.kts`: build definition used when this module is part of the
@@ -54,7 +56,8 @@ Prefer focused tests while iterating:
 - Maintain cross-platform behavior. Guard POSIX- and macOS-specific assertions
   and retain Windows `run.ps1` handling.
 - `url` inputs without a scheme imply HTTPS. Do not change that normalization
-  or archive-member parsing without updating `SPEC.md` and its tests.
+  or archive-member parsing without updating `specs/shared-resolution.md` and
+  its tests.
 - Website-only changes belong under `site/`; avoid altering CLI code or build
   configuration unless the change needs it.
 
@@ -62,4 +65,5 @@ Prefer focused tests while iterating:
 
 Run the narrowest relevant Gradle test task. Run the complete test suite for
 changes affecting resolver behavior, CLI parsing, caching, or shared helpers.
-Update `README.md` and `SPEC.md` when public behavior changes.
+Update `README.md` and the relevant specification in `specs/` when public
+behavior changes.

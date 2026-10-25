@@ -30,7 +30,7 @@ internal data class ComposeSource(val identity: String?, val path: Path, val roo
 
 /**
  * Assembles files and directory trees from cache entries into new cached directories, as specified for `compose()` in
- * SPEC-RUN.md. The cache key is derived from the recipe and its source identities, so building never hashes file contents.
+ * specs/run.md. The cache key is derived from the recipe and its source identities, so building never hashes file contents.
  */
 internal class Composer(
     cache: DiskCache,

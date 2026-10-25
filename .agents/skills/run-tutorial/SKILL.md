@@ -23,7 +23,7 @@ with the rest of the script:
 * `urls(requests)` takes an array of URLs, or a map whose values are URLs or
   arrays of URLs, and resolves them to paths in the same shape.
 * `compose(operations)` assembles a cached directory from paths returned by the
-  other functions. See [SPEC-RUN.md](https://github.com/hydraulic-software/url/blob/master/SPEC-RUN.md) for its recipe format.
+  other functions. See [run specification](https://github.com/hydraulic-software/url/blob/master/specs/run.md) for its recipe format.
 
 Start every download before awaiting any of them, then await them while
 building the launch plan:
@@ -100,7 +100,7 @@ so packages stay consistent, and Windows `.exe` handling. The
 [CEL verifier package](https://github.com/hydraulic-software/url/tree/master/site/r/cel-verifier/run.zip.d) is a worked
 example.
 
-See [SPEC-RUN.md](https://github.com/hydraulic-software/url/blob/master/SPEC-RUN.md) for the complete contract.
+See [run specification](https://github.com/hydraulic-software/url/blob/master/specs/run.md) for the complete contract.
 
 ## Timestamped packages
 

@@ -24,7 +24,7 @@ internal data class RequestedPermissions(
 
 internal data class SemanticsRevision(val date: LocalDate)
 
-// Placeholder revision date from SPEC-RUN.md; finalize before release.
+// Placeholder revision date from specs/run.md; finalize before release.
 internal val SEMANTICS_REVISIONS = listOf(SemanticsRevision(LocalDate.of(2026, 10, 10)))
 
 internal fun selectRevision(
