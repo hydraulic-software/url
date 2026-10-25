@@ -108,3 +108,19 @@ graalvmNative {
         buildArgs.add("--initialize-at-run-time=org.jline.nativ,org.jline.terminal.impl.jni")
     }
 }
+
+val nativePair = tasks.register("nativePair") {
+    description = "Build the native executable and create both run and url command names."
+    dependsOn("nativeCompile")
+    val nativeDirectory = layout.buildDirectory.dir("native/nativeCompile")
+    doLast {
+        val url = nativeDirectory.get().file("url").asFile.toPath()
+        val run = nativeDirectory.get().file("run").asFile.toPath()
+        java.nio.file.Files.deleteIfExists(run)
+        java.nio.file.Files.createLink(run, url)
+    }
+}
+
+tasks.named("build") {
+    dependsOn(nativePair)
+}

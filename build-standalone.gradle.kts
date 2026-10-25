@@ -127,14 +127,18 @@ tasks.register<JavaExec>("pgoTrainingData") {
     })
 }
 
-tasks.register("nativePair") {
+val nativePair = tasks.register("nativePair") {
+    description = "Build the native executable and create both run and url command names."
     dependsOn("nativeCompile")
     val nativeDirectory = layout.buildDirectory.dir("native/nativeCompile")
-    outputs.files(nativeDirectory.map { it.file("url") }, nativeDirectory.map { it.file("run") })
     doLast {
         val run = nativeDirectory.get().file("run").asFile.toPath()
         val url = nativeDirectory.get().file("url").asFile.toPath()
         Files.deleteIfExists(url)
         Files.createLink(url, run)
     }
+}
+
+tasks.named("build") {
+    dependsOn(nativePair)
 }
