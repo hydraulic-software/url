@@ -19,7 +19,7 @@ internal fun seatbeltProfile(grant: SandboxGrant): SeatbeltProfile {
         // Traversal and readlink are required even when the final grant uses a canonical path.
         appendLine("(allow file-read-metadata (vnode-type DIRECTORY SYMLINK))")
         appendLine("(allow file-read* (vnode-type SYMLINK))")
-        appendLine("(allow signal (target self))")
+        appendLine("(allow signal (target self) (target children))")
         fun path(operations: String, path: Path, recursive: Boolean) {
             val name = "PATH_${parameters.size}"
             parameters[name] = path.toString()
@@ -43,13 +43,13 @@ internal fun seatbeltProfile(grant: SandboxGrant): SeatbeltProfile {
             path(if (stdio.descriptor == 0) "file-read* file-ioctl" else "file-read-metadata file-write-data file-ioctl",
                 stdio.path, false)
         }
-        appendLine("(allow file-read* file-write-data file-ioctl (literal \"/dev/null\") (literal \"/dev/tty\") (regex #\"^/dev/tty[^/]*$\") (subpath \"/dev/fd\"))")
-        appendLine("(allow file-read* (literal \"/dev/random\") (literal \"/dev/urandom\"))")
+        appendLine("""(allow file-read* file-write-data file-ioctl (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/tty[^/]*$") (subpath "/dev/fd"))""")
+        appendLine("""(allow file-read* (literal "/dev/random") (literal "/dev/urandom"))""")
         // These two lookups support getpwuid without allowing Launch Services or arbitrary Mach services.
-        appendLine("(allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\") (global-name \"com.apple.system.opendirectoryd.membership\"))")
+        appendLine("""(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.opendirectoryd.membership"))""")
         if (grant.requested.networkClient == true) {
             appendLine("(allow network-outbound)")
-            appendLine("(allow mach-lookup (global-name \"com.apple.dnssd.service\") (global-name \"com.apple.trustd\") (global-name \"com.apple.trustd.agent\"))")
+            appendLine("""(allow mach-lookup (global-name "com.apple.dnssd.service") (global-name "com.apple.trustd") (global-name "com.apple.trustd.agent"))""")
         }
         if (grant.requested.networkServer == true) appendLine("(allow network-inbound network-bind)")
     }
