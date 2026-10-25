@@ -1,4 +1,5 @@
 import { graalvm } from "./graalvm.js";
+import mri from "./mri.js";
 import { hasPathSeparator, isAbsolutePath } from "./utils.js";
 
 // Hash locking for extra security against supply chain attacks: this will catch the case where the uploaded JAR changes unexpectedly.
@@ -17,9 +18,21 @@ const args = context.args;
 const read = new Set();
 const write = new Set([cache]);
 const commands = new Set(["instruct", "prompt", "chat", "server", "serve", "speak", "transcribe"]);
-// Global options such as --model may come before or after the subcommand.
-const commandIndex = args.findIndex(argument => commands.has(argument));
-const command = args[commandIndex];
+
+// Parse once so permission logic can work with named options and positional arguments.
+// Keep args untouched below: jinfer receives exactly the arguments the caller supplied.
+const parsed = mri(args, {
+  alias: { m: "model", o: "output", t: "threads" },
+  string: ["model", "with", "cache", "cache-ro", "output", "threads", "theme", "color", "port"],
+});
+const command = parsed._.find(argument => commands.has(argument));
+const commandIndex = parsed._.indexOf(command);
+
+function optionValues(value) {
+  if (typeof value === "string") return value ? [value] : [];
+  if (Array.isArray(value)) return value.filter(item => typeof item === "string" && item.length > 0);
+  return [];
+}
 
 function hasFilenameExtension(pathParts) {
   const filename = pathParts[pathParts.length - 1];
@@ -43,65 +56,26 @@ function addLocalRead(value) {
   if (isLocalPath(value) || (value && !hasPathSeparator(value))) read.add(value);
 }
 
-function optionValue(argument, longName, shortName) {
-  if (argument.startsWith(`${longName}=`)) return argument.slice(longName.length + 1);
-  if (shortName && argument.startsWith(`${shortName}=`)) return argument.slice(shortName.length + 1);
-  return null;
+// Jinfer accepts model and companion values in either --name value or --name=value form.
+for (const model of optionValues(parsed.model)) addLocalRead(model);
+for (const companionOption of optionValues(parsed.with)) {
+  const companion = companionOption.split("=", 2)[1];
+  addLocalRead(companion);
 }
 
-for (let i = 0; i < args.length; i++) {
-  const argument = args[i];
-  // Scan the whole argument list because jinfer allows these options before or after the command.
-  if (argument === "-m" || argument === "--model") {
-    // It might be a HuggingFace reference or similar, but that doesn't matter. Permissions to files that don't exist
-    // are fine and don't break anything.
-    addLocalRead(args[++i]);
-  } else if (argument.startsWith("--model=") || argument.startsWith("-m=")) {
-    addLocalRead(optionValue(argument, "--model", "-m"));
-  } else if (argument === "--with") {
-    const companion = args[++i]?.split("=", 2)[1];
-    addLocalRead(companion);
-  } else if (argument.startsWith("--with=")) {
-    addLocalRead(argument.slice("--with=".length).split("=", 2)[1]);
-  } else if (argument === "--cache") {
-    // Jinfer loads and appends this cache, and write access also includes read access.
-    if (args[i + 1] && args[i + 1] !== "-") write.add(args[++i]);
-  } else if (argument.startsWith("--cache=")) {
-    const path = optionValue(argument, "--cache");
-    if (path !== "-") write.add(path);
-  } else if (argument === "--cache-ro") {
-    // This option never modifies the saved prompt state.
-    if (args[i + 1] && args[i + 1] !== "-") read.add(args[++i]);
-  } else if (argument.startsWith("--cache-ro=")) {
-    const path = optionValue(argument, "--cache-ro");
-    if (path !== "-") read.add(path);
-  } else if (command === "speak" && (argument === "-o" || argument === "--output")) {
-    // '-' writes to stdout, which is already part of the baseline permissions.
-    if (args[i + 1] && args[i + 1] !== "-") write.add(args[++i]);
-  } else if (command === "speak" && (argument.startsWith("--output=") || argument.startsWith("-o="))) {
-    const path = optionValue(argument, "--output", "-o");
-    if (path !== "-") write.add(path);
-  }
+// Prompt caches are read and written; read-only caches only need read permission.
+for (const path of optionValues(parsed.cache)) if (path !== "-") write.add(path);
+for (const path of optionValues(parsed["cache-ro"])) if (path !== "-") read.add(path);
+
+// '-' writes to stdout, which is already part of the baseline permissions.
+if (command === "speak") {
+  for (const path of optionValues(parsed.output)) if (path !== "-") write.add(path);
 }
 
 if (command === "transcribe") {
-  // The transcription input is positional. Skip option values to find it, while '-' uses baseline stdin.
-  const optionsWithValues = new Set(["-m", "--model", "--with", "-t", "--threads", "--theme", "--color"]);
-  for (let i = commandIndex + 1; i < args.length; i++) {
-    const argument = args[i];
-    if (argument === "--") {
-      if (args[i + 1] && args[i + 1] !== "-") read.add(args[i + 1]);
-      break;
-    }
-    if (optionsWithValues.has(argument)) {
-      i++;
-    } else if (argument.startsWith("-")) {
-      continue;
-    } else {
-      if (argument !== "-") read.add(argument);
-      break;
-    }
-  }
+  // The first positional after the subcommand is the audio input; '-' means stdin.
+  const input = parsed._[commandIndex + 1];
+  if (input && input !== "-") read.add(input);
 }
 
 const java = graalvm();

@@ -1,2 +1,4 @@
 graalvm.js
+mri.js
+mri-LICENSE.txt
 utils.js
