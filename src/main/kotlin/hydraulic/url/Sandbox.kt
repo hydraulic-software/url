@@ -7,6 +7,11 @@ import java.nio.file.Path
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 
 internal val STANDARD_PERMISSION_KEYS = setOf("std.files.read", "std.files.write", "std.network.client",
     "std.network.server", "std.environment", "std.semantics")
@@ -124,48 +129,119 @@ internal fun sandboxBackend(
         SandboxBackend.SEATBELT else SandboxBackend.ENVIRONMENT_ONLY
 }
 
-internal fun dryRunDescription(plan: LaunchPlan, grant: SandboxGrant?, backend: SandboxBackend): String = buildString {
-    // JSON quoting makes whitespace, quotes and control characters in arguments unambiguous.
-    fun quoted(value: String) = JsonPrimitive(value).toString()
-    appendLine("Executable:  ${quoted(plan.executable.toString())}")
-    appendLine("Arguments:   ${plan.arguments.joinToString(" ") { quoted(it) }}")
-    if (grant == null) {
-        appendLine("Sandbox:     unrestricted")
-        return@buildString
+internal fun dryRunDescription(
+    plan: LaunchPlan,
+    grant: SandboxGrant?,
+    backend: SandboxBackend,
+    json: Boolean = false
+): String {
+    fun str(value: String) = JsonPrimitive(value)
+    fun strings(values: Iterable<String>) = JsonArray(values.map(::str))
+    fun pathRows(values: List<GrantedPath>) = JsonArray(values.map { path -> JsonObject(mapOf(
+        "requested" to str(path.requested), "path" to str(path.path.toString()), "missing" to JsonPrimitive(path.missing)
+    )) })
+    val sandbox = if (grant == null) JsonNull else {
+        val permissions = linkedMapOf<String, kotlinx.serialization.json.JsonElement>()
+        if ("std.files.read" in grant.requested.declared) permissions["std.files.read"] = pathRows(grant.read)
+        if ("std.files.write" in grant.requested.declared) permissions["std.files.write"] = pathRows(grant.write)
+        if ("std.semantics" in grant.requested.declared)
+            permissions["std.semantics"] = grant.requested.semantics?.let { str(it.toString()) } ?: JsonNull
+        permissions["std.network.client"] = JsonPrimitive(grant.requested.networkClient == true)
+        permissions["std.network.server"] = JsonPrimitive(grant.requested.networkServer == true)
+        if ("std.environment" in grant.requested.declared) permissions["std.environment"] = JsonArray(
+            grant.environmentMatches.map { (pattern, matches) -> JsonObject(mapOf(
+                "pattern" to str(pattern), "matches" to strings(matches)
+            )) }
+        )
+        JsonObject(mapOf(
+            "revision" to str(grant.revision.date.toString()),
+            "backend" to str(backend.description),
+            "enforcement" to JsonObject(mapOf("filesAndNetwork" to JsonPrimitive(backend.confinesProcess), "environment" to JsonPrimitive(true))),
+            "permissions" to JsonObject(permissions),
+            "baseline" to JsonObject(mapOf(
+                "readExecute" to strings(grant.baselineRead.map(Path::toString) + "system libraries, configuration and programs"),
+                "workingDirectoryTraversal" to str(grant.workingDirectory.toString()),
+                "temporaryDirectory" to str(grant.temporaryDirectory.toString()),
+                "environment" to strings(grant.environment.keys.sorted())
+            )),
+            "unrecognizedKeys" to strings(grant.requested.unrecognized.sorted())
+        ))
     }
-    appendLine("Sandbox:     ${grant.revision.date} rules (${backend.description})")
-    appendLine("Permissions:")
-    fun paths(key: String, paths: List<GrantedPath>) {
-        if (key !in grant.requested.declared) return
-        if (paths.isEmpty()) appendLine("  $key  none")
-        paths.forEach { appendLine("  $key  ${quoted(it.path.toString())}${if (it.missing) " (does not exist yet)" else ""}") }
+    if (json) return Json { prettyPrint = true }.encodeToString(JsonElement.serializer(), JsonObject(mapOf(
+        "executable" to str(plan.executable.toString()),
+        "arguments" to strings(plan.arguments),
+        "sandbox" to sandbox
+    )))
+
+    val color = System.console() != null && System.getenv("TERM") != "dumb"
+    fun styled(value: String, code: String) = if (color) "\u001B[${code}m$value\u001B[0m" else value
+    fun section(title: String) = styled(title, "1;36")
+    fun permissionState(label: String, enabled: Boolean) = when {
+        enabled -> styled(label, "32")
+        color -> styled(label, "2;9")
+        else -> "$label (off)"
     }
-    paths("std.files.read", grant.read)
-    paths("std.files.write", grant.write)
-    if ("std.semantics" in grant.requested.declared) appendLine("  std.semantics  ${grant.requested.semantics}")
-    appendLine("  std.network.client  ${grant.requested.networkClient == true}")
-    appendLine("  std.network.server  ${grant.requested.networkServer == true}")
-    if ("std.environment" in grant.requested.declared && grant.requested.environment.isEmpty())
-        appendLine("  std.environment  none")
-    grant.environmentMatches.forEach { (pattern, matches) ->
-        appendLine("  std.environment  ${quoted(pattern)} (matches ${matches.joinToString(" ").ifEmpty { "none" }})")
-    }
-    appendLine("  files, network  ${if (backend.confinesProcess) "enforced" else "not enforced"}")
-    appendLine("  environment  enforced")
-    appendLine("Baseline:")
-    grant.baselineRead.forEach { appendLine("  read, execute  ${quoted(it.toString())}") }
-    appendLine("  read, execute  system libraries, configuration and programs")
-    if (backend == SandboxBackend.SEATBELT) {
-        SEATBELT_SYSTEM_PATHS.forEach { appendLine("    ${quoted(it)}") }
-        appendLine("  directory metadata and symbolic-link traversal")
-        appendLine("  working-directory traversal  ${quoted(grant.workingDirectory.toString())}")
-    }
-    appendLine("  read, write  private temporary directory ${quoted(grant.temporaryDirectory.toString())}")
-    appendLine("  stdio and controlling terminal")
-    grant.stdio.forEach { appendLine("    fd ${it.descriptor}  ${quoted(it.path.toString())}") }
-    appendLine("  environment  ${grant.environment.keys.sorted().joinToString(" ")}")
-    if (grant.requested.unrecognized.isNotEmpty()) {
-        appendLine("Unrecognized keys (not granted):")
-        grant.requested.unrecognized.sorted().forEach { appendLine("  ${quoted(it)}") }
+    fun humanValue(value: String) = if (value.isEmpty() || value.any { it.isWhitespace() }) JsonPrimitive(value).toString() else value
+    return buildString {
+        fun numbered(values: Iterable<String>) {
+            val items = values.toList()
+            if (items.isEmpty()) {
+                appendLine("    ${styled("(none)", "2")}")
+            } else {
+                items.forEachIndexed { index, item ->
+                    appendLine("    ${styled("%2d".format(index + 1), "2")}  $item")
+                }
+            }
+        }
+        appendLine(styled("DRY RUN", "1;33") + styled("  Launch plan", "2"))
+        appendLine()
+        appendLine(section("Command"))
+        appendLine("  ${styled("Executable", "2")}  ${humanValue(plan.executable.toString())}")
+        appendLine("  ${styled("Arguments", "2")}")
+        numbered(plan.arguments.map(::humanValue))
+        if (grant == null) {
+            appendLine()
+            appendLine(section("Sandbox"))
+            appendLine("  ${styled("unrestricted", "32")}")
+            return@buildString
+        }
+        appendLine()
+        appendLine(section("Sandbox"))
+        appendLine("  ${styled("Rules revision", "2")}  ${grant.revision.date}")
+        appendLine("  ${styled("Backend", "2")}         ${backend.description}")
+        appendLine()
+        appendLine(section("Permissions"))
+        appendLine("  ${styled("Requested", "2")}")
+        fun paths(label: String, values: List<GrantedPath>) {
+            if ("std.files.$label" !in grant.requested.declared) return
+            appendLine("  ${styled(label, "2")}")
+            numbered(values.map { "${humanValue(it.path.toString())}${if (it.missing) styled("  ·  not created yet", "33") else ""}" })
+        }
+        paths("read", grant.read); paths("write", grant.write)
+        if ("std.semantics" in grant.requested.declared)
+            appendLine("  ${styled("semantics", "2")}  ${grant.requested.semantics}")
+        appendLine("  ${styled("network", "2")}  ${permissionState("client", grant.requested.networkClient == true)} · ${permissionState("server", grant.requested.networkServer == true)}")
+        if ("std.environment" in grant.requested.declared && grant.requested.environment.isEmpty())
+            appendLine("  ${styled("environment", "2")}  ${styled("none", "2")}")
+        if (grant.environmentMatches.isNotEmpty()) {
+            appendLine("  ${styled("environment patterns", "2")}")
+            numbered(grant.environmentMatches.map { (pattern, matches) ->
+                "${humanValue(pattern)}  ${styled("→", "2")}  ${matches.joinToString(", ").ifEmpty { "none" }}"
+            })
+        }
+        appendLine("  ${styled("enforcement", "2")}  files and network ${if (backend.confinesProcess) "enforced" else "not enforced"} · environment enforced")
+        appendLine(); appendLine("  ${styled("Baseline", "2")}")
+        appendLine("  ${styled("read + execute", "2")}")
+        numbered(grant.baselineRead.map { humanValue(it.toString()) } + "system libraries, configuration and programs")
+        if (backend == SandboxBackend.SEATBELT) {
+            appendLine("  ${styled("working directory traversal", "2")}  ${humanValue(grant.workingDirectory.toString())}")
+        }
+        appendLine("  ${styled("private temporary directory", "2")}  ${humanValue(grant.temporaryDirectory.toString())}")
+        appendLine("  ${styled("environment", "2")}")
+        numbered(grant.environment.keys.sorted())
+        if (grant.requested.unrecognized.isNotEmpty()) {
+            appendLine(); appendLine(styled("Unrecognized keys (not granted)", "1;33"))
+            numbered(grant.requested.unrecognized.sorted().map(::humanValue))
+        }
     }
 }

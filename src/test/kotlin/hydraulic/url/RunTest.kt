@@ -6,6 +6,9 @@ import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import picocli.CommandLine
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.net.URI
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
@@ -425,13 +428,39 @@ class RunTest : URLTestSupport() {
             assertEquals(listOf("-d"), run.arguments)
         } finally { System.setOut(previous) }
         val output = bytes.toString(Charsets.UTF_8)
-        assertContains(output, "Executable:")
-        assertContains(output, "Arguments:   \"-d\"")
-        assertContains(output, "2026-10-10 rules")
-        assertContains(output, "does not exist yet")
-        assertContains(output, "matches CC_FLAGS")
-        assertContains(output, "Baseline:")
+        assertContains(output, "DRY RUN")
+        assertContains(output, "Command")
+        assertContains(output, "Arguments")
+        assertContains(output, "    1  -d")
+        assertContains(output, "client (off) · server (off)")
+        assertContains(output, "Rules revision  2026-10-10")
+        assertContains(output, "Backend")
+        assertContains(output, "2026-10-10")
+        assertContains(output, "not created yet")
+        assertContains(output, "CC_FLAGS")
+        assertContains(output, "Permissions")
+        assertContains(output, "Baseline")
         assertContains(output, "std.future")
+        val json = dryRunDescription(LaunchPlan(Path.of("tool"), listOf("a b")), null,
+            SandboxBackend.ENVIRONMENT_ONLY, json = true)
+        assertContains(json, "\n    \"executable\"")
+        val readable = dryRunDescription(LaunchPlan(Path.of("tool"), listOf("plain", "two words")), null,
+            SandboxBackend.ENVIRONMENT_ONLY)
+        assertContains(readable, "    1  plain")
+        assertContains(readable, "    2  \"two words\"")
+        assertEquals("tool", kotlinx.serialization.json.Json.parseToJsonElement(json)
+            .jsonObject["executable"]?.jsonPrimitive?.content)
+        assertEquals("a b", kotlinx.serialization.json.Json.parseToJsonElement(json)
+            .jsonObject["arguments"]?.jsonArray?.single()?.jsonPrimitive?.content)
+        val jsonBytes = ByteArrayOutputStream()
+        try {
+            System.setOut(PrintStream(jsonBytes))
+            assertEquals(0, CommandLine(Run(environment = mapOf("CC_FLAGS" to "flags"))).setStopAtPositional(true)
+                .execute("--dry-run=json", "--cache-dir", (tempDir / "json-cache").toString(), directory.toString()))
+        } finally { System.setOut(previous) }
+        assertEquals("/does-not-exist",
+            kotlinx.serialization.json.Json.parseToJsonElement(jsonBytes.toString(Charsets.UTF_8))
+                .jsonObject["executable"]?.jsonPrimitive?.content)
         (directory / "run.js").writeText("export default { executable: 'tool', arguments: [], permissions: null };")
         assertTrue(CommandLine(Run()).setStopAtPositional(true).execute("-d", "--cache-dir",
             (tempDir / "invalid-cache").toString(), directory.toString()) != 0)

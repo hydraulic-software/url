@@ -428,7 +428,7 @@ host applied.
 
 ## Dry runs
 
-`run --dry` or `run -d`, followed by a run target and its arguments,
+`run --dry`, `run -d`, or `run --dry-run`, followed by a run target and its arguments,
 evaluates the package as a normal run would, including resolving and
 caching its URLs, and then prints the launch plan to stdout instead of
 starting the process. Like other `run` options, the flag must come before
@@ -436,12 +436,12 @@ the target; after the target, it is an argument for the package. A dry run
 exits with status 0 when the plan is valid. An invalid plan fails as it
 would in a normal run.
 
-The output is meant for people and its format is not specified. It includes
-the executable, the arguments, and whether the process would run
-unrestricted or sandboxed. For a sandboxed process it lists the semantics
-revision, each declared permission with its resolved paths, any grants the
-host widened, the baseline grants, and any keys the host does not recognize.
-For example:
+The default output is a human-readable terminal summary. `--dry-run=json`
+prints the same launch plan as a JSON object with `executable`, `arguments`,
+and `sandbox` fields. `sandbox` is `null` for an unrestricted process. For a
+sandboxed process it includes the semantics revision, declared permissions
+and resolved paths, enforcement status, baseline grants, and unrecognized
+keys. For example:
 
 ```
 $ run -d example.com/cc -o out/app main.c

@@ -42,6 +42,10 @@ class Run(
     @Option(names = ["--dry", "-d"], description = ["Print the evaluated launch plan without starting the process."])
     var dry: Boolean = false
 
+    @Option(names = ["--dry-run"], arity = "0..1", fallbackValue = "text", paramLabel = "FORMAT",
+        description = ["Print the launch plan (text or json)."])
+    var dryRunFormat: String? = null
+
     @Mixin
     var resolverOptions: ResolverOptions = ResolverOptions(environment, defaultProgress = "bar")
 
@@ -105,8 +109,10 @@ class Run(
                 }
                 val executable = launchExecutable(plan.executable, windows)
                 val backend = sandboxBackend(executable, operatingSystem, grant?.environment ?: environment)
-                if (dry) {
-                    println(dryRunDescription(plan.copy(executable = executable), grant, backend))
+                val selectedDryRunFormat = dryRunFormat ?: if (dry) "text" else null
+                if (selectedDryRunFormat != null) {
+                    require(selectedDryRunFormat in setOf("text", "json")) { "Unsupported dry-run format: $selectedDryRunFormat" }
+                    println(dryRunDescription(plan.copy(executable = executable), grant, backend, selectedDryRunFormat == "json"))
                     0
                 } else {
                     val processEnvironment = grant?.environment ?: environment
