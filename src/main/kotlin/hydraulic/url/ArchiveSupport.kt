@@ -91,7 +91,7 @@ internal fun streamedArchiveIsFresh(metadata: Map<String, String>): Boolean {
 }
 
 private val ARCHIVE_SUFFIXES = listOf(
-    ".tar.zstd", ".tar.zst", ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.Z", ".zip", ".tar"
+    ".tar.zstd", ".tar.zst", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".tar.Z", ".zip", ".tar"
 )
 
 internal const val STREAM_RESPONSE_TIME = "stream.response-time"

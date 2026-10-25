@@ -34,6 +34,10 @@ class URLResolverTest : URLTestSupport() {
         val parsed = parseArchiveURL(URI("https://example.com/releases/tool.tar.gz/bin/tool"))!!
         assertEquals(URI("https://example.com/releases/tool.tar.gz"), parsed.archiveURI)
         assertEquals(listOf("bin", "tool"), parsed.member)
+
+        val npmPackage = parseArchiveURL(URI("https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.2.tgz/package/bin/esbuild"))!!
+        assertEquals(URI("https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.2.tgz"), npmPackage.archiveURI)
+        assertEquals(listOf("package", "bin", "esbuild"), npmPackage.member)
     }
 
     @Test
@@ -113,12 +117,14 @@ class URLResolverTest : URLTestSupport() {
     fun `hash locks on archive directory results authenticate the archive`() = withServer { server ->
         val zip = zipOf("tool-1.0/bin/tool" to "archive member")
         val tarball = tarGzOf("tool-1.0/bin/tool" to "streamed member")
+        val tgzball = tarGzOf("tool-1.0/bin/tool" to "npm tarball member")
         val innerZip = zipOf("inner/file.txt" to "nested member")
         val outerZip = zipOfBytes("inner.zip" to innerZip)
         server.createContext("/") {
             when (it.requestURI.path) {
                 "/tool.zip" -> it.respond(zip)
                 "/tool.tar.gz" -> it.respond(tarball)
+                "/tool.tgz" -> it.respond(tgzball)
                 "/outer.zip" -> it.respond(outerZip)
                 else -> it.respond404()
             }
@@ -137,11 +143,14 @@ class URLResolverTest : URLTestSupport() {
                 URLResolver(cache).resolve(server.uri("/tool.tar.gz/#sha256=${tarball.sha256()}")).use {
                     assertEquals("streamed member", (it.path / "tool-1.0/bin/tool").readText())
                 }
+                URLResolver(cache).resolve(server.uri("/tool.tgz/#sha256=${tgzball.sha256()}")).use {
+                    assertEquals("npm tarball member", (it.path / "tool-1.0/bin/tool").readText())
+                }
                 URLResolver(cache).resolve(server.uri("/outer.zip/inner.zip/inner/#sha256=${innerZip.sha256()}")).use {
                     assertEquals("nested member", (it.path / "file.txt").readText())
                 }
             }
-            for (path in listOf("/tool.zip/", "/tool.zip/tool-1.0/bin/", "/tool.tar.gz/", "/outer.zip/inner.zip/inner/")) {
+            for (path in listOf("/tool.zip/", "/tool.zip/tool-1.0/bin/", "/tool.tar.gz/", "/tool.tgz/", "/outer.zip/inner.zip/inner/")) {
                 assertFailsWith<IllegalArgumentException>(path) {
                     URLResolver(cache).resolve(server.uri("$path#sha256=$wrong"))
                 }

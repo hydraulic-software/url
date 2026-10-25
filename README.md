@@ -94,7 +94,7 @@ Archives may be nested, for example `url example.com/outer.zip/dir/inner.zip/fil
 Remote tar archives are decompressed directly from the HTTP response into the
 extraction cache, so the compressed tarball is not retained. If that exact
 tarball is already in the download cache, the local copy is reused. Supported
-tar forms are uncompressed `.tar`, gzip (`.tar.gz`), bzip2 (`.tar.bz2`), XZ
+tar forms are uncompressed `.tar`, gzip (`.tar.gz` and `.tgz`), bzip2 (`.tar.bz2`), XZ
 (`.tar.xz`), Zstandard (`.tar.zst` and `.tar.zstd`), and UNIX compress
 (`.tar.Z`); ZIP is also supported but requires a seekable cached file.
 Extraction stays in-process, consistently across Linux, macOS, and Windows,

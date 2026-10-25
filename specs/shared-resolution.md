@@ -62,7 +62,7 @@ effect unless it immediately follows the initial hashbang line.
 
 If requesting an input returns 404 and its path contains a supported archive
 suffix, the resolver must treat the remaining path as an archive member and try
-the archive resource. Supported suffixes are `.zip`, `.tar`, `.tar.gz`,
+the archive resource. Supported suffixes are `.zip`, `.tar`, `.tar.gz`, `.tgz`,
 `.tar.bz2`, `.tar.xz`, `.tar.zst`, `.tar.zstd`, and `.tar.Z`,
 case-insensitively. Archives may be nested.
 A trailing slash after an archive name selects its extracted root.
